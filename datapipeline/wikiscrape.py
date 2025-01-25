@@ -10,6 +10,8 @@ import time
 import re
 import pickle
 from pathlib import Path
+import json
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -583,99 +585,113 @@ class WikiScraper:
             return {}
 
     def download_latin_terms(self, limit: Optional[int] = None) -> List[Dict]:
-        """Download Latin terms with IPA pronunciation"""
-        # Try loading from cache first
+        """Download all Latin terms with IPA pronunciation"""
         cache_path = self._get_cache_path("Latin_terms_with_IPA_pronunciation")
+        
+        # Force fresh download by clearing cache
         if cache_path.exists():
-            with open(cache_path, 'rb') as f:
-                cached_pages = pickle.load(f)
-                logger.info(f"Loaded {len(cached_pages)} Latin terms from cache")
-                return cached_pages[:limit] if limit else cached_pages
-
-        logger.info("No cache found, downloading Latin terms from Wiktionary...")
+            os.remove(cache_path)
+            logger.info("Cleared existing cache to force fresh download")
+        
+        logger.info("Starting fresh download of all Latin terms from Wiktionary...")
         pages = []
         continue_param = None
         batch_count = 0
+        current_delay = self.delay
         
         try:
+            # Get all page references first
             while True:
-                # Implement batch delays
-                if batch_count > 0:
-                    logger.info(f"Waiting {self.batch_delay}s between batches...")
-                    time.sleep(self.batch_delay)
-                
                 params = {
                     'action': 'query',
                     'format': 'json',
-                    'generator': 'categorymembers',
-                    'gcmtitle': 'Category:Latin_terms_with_IPA_pronunciation',
-                    'gcmlimit': min(self.batch_size, limit - len(pages) if limit else self.batch_size),
-                    'prop': 'revisions',
-                    'rvprop': 'content|ids|timestamp',
-                    'rvslots': 'main'
+                    'list': 'categorymembers',
+                    'cmtitle': 'Category:Latin_terms_with_IPA_pronunciation',
+                    'cmlimit': 500,  # Get maximum allowed per request
+                    'cmtype': 'page',
+                    'cmprop': 'ids|title'
                 }
                 
                 if continue_param:
                     params.update(continue_param)
                 
-                # Make request with retry logic
-                for attempt in range(self.max_retries):
-                    try:
-                        response = self.session.get(self.BASE_API_URL, params=params)
-                        response.raise_for_status()
-                        data = response.json()
-                        break
-                    except requests.exceptions.RequestException as e:
-                        if attempt < self.max_retries - 1:
-                            logger.warning(f"Request failed (attempt {attempt + 1}/{self.max_retries}), waiting {self.retry_delay}s...")
-                            time.sleep(self.retry_delay)
-                        else:
-                            logger.error(f"Failed after {self.max_retries} attempts: {e}")
-                            time.sleep(self.error_delay)
-                            raise
+                response = self.session.get(self.BASE_API_URL, params=params)
+                response.raise_for_status()
+                data = response.json()
                 
-                # Process response
-                if 'query' in data and 'pages' in data['query']:
-                    new_pages = list(data['query']['pages'].values())
+                if 'query' in data and 'categorymembers' in data['query']:
+                    new_pages = data['query']['categorymembers']
                     pages.extend(new_pages)
                     batch_count += 1
-                    
-                    logger.info(f"Batch {batch_count}: Downloaded {len(new_pages)} pages (Total: {len(pages)})")
-                    
-                    if limit and len(pages) >= limit:
-                        pages = pages[:limit]
-                        break
+                    logger.info(f"Downloaded batch {batch_count} ({len(new_pages)} pages, total: {len(pages)})")
                 
                 if 'continue' not in data:
                     break
-                    
-                continue_param = data['continue']
-                time.sleep(self.delay)
+                
+                continue_param = {'cmcontinue': data['continue']['cmcontinue']}
+                time.sleep(current_delay)
             
-            # Save to cache if we got data
-            if pages:
+            logger.info(f"Downloaded {len(pages)} page references, fetching content...")
+            
+            # Get content in efficient batches
+            content_pages = []
+            total_batches = (len(pages) + 49) // 50
+            
+            for batch_num in range(total_batches):
+                start_idx = batch_num * 50
+                end_idx = min((batch_num + 1) * 50, len(pages))
+                batch = pages[start_idx:end_idx]
+                
+                params = {
+                    'action': 'query',
+                    'format': 'json',
+                    'pageids': '|'.join(str(p['pageid']) for p in batch),
+                    'prop': 'revisions',
+                    'rvprop': 'content|ids|timestamp',
+                    'rvslots': 'main'
+                }
+                
+                response = self.session.get(self.BASE_API_URL, params=params)
+                response.raise_for_status()
+                data = response.json()
+                
+                if 'query' in data and 'pages' in data['query']:
+                    batch_content = list(data['query']['pages'].values())
+                    content_pages.extend(batch_content)
+                    logger.info(f"Fetched content batch {batch_num + 1}/{total_batches} ({len(content_pages)}/{len(pages)} pages)")
+                
+                time.sleep(current_delay)
+            
+            # Save to cache
+            if content_pages:
                 with open(cache_path, 'wb') as f:
-                    pickle.dump(pages, f)
-                logger.info(f"Cached {len(pages)} Latin terms for future use")
+                    pickle.dump(content_pages, f)
+                logger.info(f"Cached {len(content_pages)} Latin terms for future use")
             
-            return pages
+            return content_pages[:limit] if limit else content_pages
             
         except Exception as e:
-            logger.error(f"Error downloading Latin terms: {e}")
+            logger.error(f"Error downloading Latin terms: {str(e)}")
+            logger.error(f"Traceback:", exc_info=True)
             return []
 
     def extract_latin_data(self, page_data: Dict) -> Dict:
         """Extract Latin term data with IPA pronunciation"""
         try:
             if 'revisions' not in page_data or not page_data['revisions']:
+                logger.debug(f"No revisions found in page: {page_data.get('title')}")
                 return {}
             
             content = page_data['revisions'][0]['slots']['main']['*']
             title = page_data.get('title', '')
             
+            # Debug log the content
+            logger.debug(f"Processing {title} with content length: {len(content)}")
+            
             # Extract Latin section
             latin_section = re.search(r'==Latin==\s*(.*?)(?=\n==|\Z)', content, re.DOTALL)
             if not latin_section:
+                logger.debug(f"No Latin section found in {title}")
                 return {}
             
             latin_content = latin_section.group(1)
@@ -685,16 +701,29 @@ class WikiScraper:
             pronunciation = ipa_match.group(1) if ipa_match else None
             
             # Extract part of speech and definition
-            pos_section = re.search(r'===(?:Noun|Verb|Adjective|Adverb|Pronoun)===\s*#\s*(.+?)(?=\n[^#]|\Z)', latin_content, re.DOTALL)
-            definition = pos_section.group(1).strip() if pos_section else None
+            pos_pattern = r'===(?P<pos>Noun|Verb|Adjective|Adverb|Pronoun)===\s*#\s*(?P<def>.+?)(?=\n[^#]|\Z)'
+            pos_match = re.search(pos_pattern, latin_content, re.DOTALL)
             
-            return {
+            if pos_match:
+                pos = pos_match.group('pos')
+                definition = pos_match.group('def').strip()
+            else:
+                pos = None
+                definition = None
+            
+            result = {
                 'title': title,
                 'original_characters': title,
                 'ipa_phoneme': pronunciation,
                 'english_translation': definition,
+                'part_of_speech': pos,
                 'raw_content': latin_content
             }
+            
+            # Debug log the extracted data
+            logger.debug(f"Extracted data for {title}: {result}")
+            
+            return result
             
         except Exception as e:
             logger.error(f"Error extracting Latin data from {page_data.get('title', 'unknown')}: {e}")

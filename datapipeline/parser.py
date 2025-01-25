@@ -34,9 +34,10 @@ class LatinParser(LanguageParser):
     def parse_batch(self, raw_data_list: List[Dict], batch_size: int) -> List[Dict]:
         """Parse multiple Latin entries in a single Claude request"""
         try:
-            batch_prompt = "Parse multiple Latin dictionary entries. For each entry, provide:\n\n"
-            batch_prompt += "ipa_phoneme: [IPA pronunciation]\n"
-            batch_prompt += "english_translation: [English meaning]\n"
+            # Build prompt for batch
+            batch_prompt = "Parse these Latin dictionary entries. For each entry, provide:\n\n"
+            batch_prompt += "ipa_phoneme: [IPA pronunciation without brackets]\n"
+            batch_prompt += "english_translation: [concise English meaning]\n"
             batch_prompt += "part_of_speech: [grammatical category]\n\n"
             
             for i, entry in enumerate(raw_data_list, 1):
@@ -45,27 +46,30 @@ class LatinParser(LanguageParser):
                 batch_prompt += f"Content:\n{entry.get('raw_content', '')}\n"
                 batch_prompt += "\n---\n"
             
+            # Make request to Claude
             response = self.client.messages.create(
                 model="claude-3-haiku-20240307",
                 max_tokens=1500,
                 temperature=0,
-                system="You are a Latin linguistics expert. Parse each entry and return the requested fields in a consistent format. Use '---' to separate entries.",
+                system="You are a Latin linguistics expert. Extract the requested information from each entry. Use '---' to separate entries.",
                 messages=[{"role": "user", "content": batch_prompt}]
             )
             
+            # Parse response
             content = response.content[0].text
-            entry_responses = content.split('---')
-            parsed_entries = []
+            entries = content.split('---')
             
-            for raw_data, response_text in zip(raw_data_list, entry_responses):
-                parsed = self._parse_single_response(response_text.strip(), raw_data)
-                parsed_entries.append(parsed)
+            parsed_entries = []
+            for raw_data, entry_text in zip(raw_data_list, entries):
+                parsed = self._parse_single_response(entry_text.strip(), raw_data)
+                if parsed:
+                    parsed_entries.append(parsed)
             
             return parsed_entries
             
         except Exception as e:
             logger.error(f"Error in batch parsing: {str(e)}")
-            return [self._empty_result() for _ in raw_data_list]
+            return []
 
     def _parse_single_response(self, response_text: str, raw_data: Dict) -> Dict:
         """Parse a single Latin entry response"""
