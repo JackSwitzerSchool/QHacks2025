@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Future Language Predictor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>Future Language Predictor</h1>
+    </header>
+    <main>
+        <form id="language-form">
+            <label for="language-select">Select Future Language:</label>
+            <select id="language-select" name="language">
+                <option value="future_english">Future English</option>
+                <option value="future_spanish">Future Spanish</option>
+                <option value="future_mandarin">Future Mandarin</option>
+                <option value="future_hindi">Future Hindi</option>
+            </select>
+
+            <div>
+                <label for="user-input">Speak or Type:</label>
+                <textarea id="user-input" name="user_input" rows="5" cols="50" placeholder="Speak or type your message here..."></textarea>
+                <button type="button" id="start-mic">🎤 Start Recording</button>
+                <button type="button" id="stop-mic">🛑 Stop Recording</button>
+            </div>
+
+            <button type="submit">Submit</button>
+        </form>
+
+        <section id="response">
+            <h2>Response:</h2>
+            <p id="response-text">Your response will appear here...</p>
+        </section>
+    </main>
+
+    <script>
+        let recognition;
+        if ("webkitSpeechRecognition" in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = false;
+            recognition.lang = "en-US";
+
+            $("#start-mic").on("click", () => {
+                recognition.start();
+                console.log("Recording started...");
+            });
+
+            $("#stop-mic").on("click", () => {
+                recognition.stop();
+                console.log("Recording stopped.");
+            });
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[event.results.length - 1][0].transcript;
+                $("#user-input").val($("#user-input").val() + transcript);
+            };
+
+            recognition.onerror = (event) => {
+                console.error("Speech recognition error:", event.error);
+            };
+        } else {
+            alert("Speech recognition is not supported in your browser.");
+        }
+
+        $("#language-form").on("submit", function (e) {
+            e.preventDefault();
+            const formData = {
+                language: $("#language-select").val(),
+                user_input: $("#user-input").val()
+            };
+
+            $.ajax({
+                url: "/predict",
+                type: "POST",
+                contentType: "application/json",
+                data: JSON.stringify(formData),
+                success: function (response) {
+                    $("#response-text").text(response.predicted_text);
+                },
+                error: function (error) {
+                    console.error("Error:", error);
+                    $("#response-text").text("Error processing your request.");
+                }
+            });
+        });
+    </script>
+</body>
+</html>
