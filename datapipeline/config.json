@@ -1,0 +1,20 @@
+{
+    "ANTHROPIC_API_URL": "https://api.anthropic.com/v1/messages",
+    "SUPPORTED_LANGUAGES": [
+        "Old-English",
+        "Modern-English",
+        "Latin",
+        "Proto-Indo-European"
+    ],
+    "DATA_SCHEMA": {
+        "required_fields": [
+            "ipa_phoneme",
+            "english_translation",
+            "description",
+            "original_characters"
+        ]
+    },
+    "INPUT_FORMATS": ["csv", "xlsx", "web"],
+    "INPUT_DIR": "datapipeline/data/input/",
+    "OUTPUT_DIR": "datapipeline/data/output/"
+}
