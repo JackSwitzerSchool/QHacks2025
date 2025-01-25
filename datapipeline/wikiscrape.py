@@ -8,6 +8,8 @@ import logging
 from typing import List, Dict, Optional
 import time
 import re
+import pickle
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +17,14 @@ class WikiScraper:
     """Handles interaction with Wiktionary API and web scraping"""
     
     BASE_API_URL = "https://en.wiktionary.org/w/api.php"
-    BASE_URL = "https://en.wiktionary.org"
+    BASE_URL = "https://en.wiktionary.org/wiki"
     
-    def __init__(self, delay: float = 1.0):
+    def __init__(self, delay: float = 0.5):
         """
         Initialize WikiScraper with Wiktionary-friendly settings
         
         Args:
-            delay: Time to wait between requests (default 1.0 seconds)
+            delay: Time to wait between requests (default 0.5 seconds)
         """
         self.session = requests.Session()
         self.session.headers.update({
@@ -33,14 +35,39 @@ class WikiScraper:
         self.delay = delay
         self.max_retries = 3
         self.retry_delay = 5
-        self.batch_size = 50  # Wiktionary recommends smaller batches
-        self.batch_delay = 3  # Delay between batches
-        self.error_delay = 30  # Delay after errors
+        self.batch_size = 500
+        self.batch_delay = 1
+        self.error_delay = 30
+        self.backoff_factor = 1.5
+
+        # Add bot parameters
+        self.default_params = {
+            'maxlag': 5,
+            'assertuser': 'LanguageResearchBot'
+        }
         
         logger.info(f"WikiScraper initialized with:")
-        logger.info(f"- Request delay: {self.delay}s")
+        logger.info(f"- Initial request delay: {self.delay}s")
         logger.info(f"- Batch size: {self.batch_size}")
-        logger.info(f"- Batch delay: {self.batch_delay}s")
+        logger.info(f"- Initial batch delay: {self.batch_delay}s")
+        
+        self.cache_dir = Path('datapipeline/data/cache')
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_cache_path(self, category: str) -> Path:
+        return self.cache_dir / f"{category.replace(':', '_')}.pkl"
+        
+    def _load_cache(self, category: str) -> List[Dict]:
+        cache_path = self._get_cache_path(category)
+        if cache_path.exists():
+            with open(cache_path, 'rb') as f:
+                return pickle.load(f)
+        return None
+        
+    def _save_cache(self, category: str, pages: List[Dict]):
+        cache_path = self._get_cache_path(category)
+        with open(cache_path, 'wb') as f:
+            pickle.dump(pages, f)
 
     def download_pie_roots(self, limit: int = None) -> List[Dict]:
         """Download PIE root data in bulk with rate limiting"""
@@ -404,30 +431,62 @@ class WikiScraper:
             logger.error(f"Error extracting raw data from {page_data.get('title', 'unknown')}: {e}")
             return {}
 
+    def _handle_rate_limit(self, response: requests.Response) -> None:
+        """Dynamically adjust delays based on rate limit headers"""
+        if response.status_code == 429:  # Too Many Requests
+            # Increase delays
+            self.batch_delay *= self.backoff_factor
+            self.delay *= self.backoff_factor
+            logger.warning(f"Rate limited. Increasing delays - Batch: {self.batch_delay:.1f}s, Request: {self.delay:.1f}s")
+            
+            # Get retry-after if available
+            retry_after = response.headers.get('retry-after')
+            if retry_after:
+                sleep_time = int(retry_after)
+                logger.info(f"Sleeping for {sleep_time}s as requested by server")
+                time.sleep(sleep_time)
+            else:
+                time.sleep(self.batch_delay)
+
     def download_old_english_terms(self, limit: int = None) -> List[Dict]:
         """Download Old English terms with IPA pronunciations"""
         logger.info("Starting bulk download of Old English terms")
+        logger.info(f"Using batch size: {self.batch_size}")  # Debug log
+        
+        # Try loading from cache first
+        cached_pages = self._load_cache(OLD_ENGLISH_CATEGORY)
+        if cached_pages:
+            logger.info(f"Loaded {len(cached_pages)} pages from cache")
+            return cached_pages[:limit] if limit else cached_pages
+        
         pages = []
         continue_param = None
         batch_count = 0
         
         while True:
             try:
-                # Implement batch delays
                 if batch_count > 0:
                     logger.info(f"Waiting {self.batch_delay}s between batches...")
                     time.sleep(self.batch_delay)
+                
+                # Calculate remaining limit
+                remaining = limit - len(pages) if limit else None
+                current_batch_size = min(self.batch_size, remaining) if remaining else self.batch_size
                 
                 params = {
                     'action': 'query',
                     'format': 'json',
                     'generator': 'categorymembers',
-                    'gcmtitle': OLD_ENGLISH_CATEGORY,
-                    'gcmlimit': min(self.batch_size, limit - len(pages) if limit else self.batch_size),
+                    'gcmtitle': "Category:Old_English_terms_with_IPA_pronunciation",
+                    'gcmlimit': str(current_batch_size),  # Explicitly convert to string
                     'prop': 'revisions',
                     'rvprop': 'content|ids|timestamp',
-                    'rvslots': 'main'
+                    'rvslots': 'main',
+                    'gcmnamespace': 0,
+                    'gcmtype': 'page'
                 }
+                
+                logger.info(f"Requesting batch with size: {current_batch_size}")  # Debug log
                 
                 if continue_param:
                     params.update(continue_param)
@@ -436,6 +495,12 @@ class WikiScraper:
                 for attempt in range(self.max_retries):
                     try:
                         response = self.session.get(self.BASE_API_URL, params=params)
+                        
+                        # Check for rate limiting
+                        if response.status_code == 429:
+                            self._handle_rate_limit(response)
+                            continue
+                            
                         response.raise_for_status()
                         data = response.json()
                         break
@@ -456,12 +521,10 @@ class WikiScraper:
                     
                     logger.info(f"Batch {batch_count}: Retrieved {len(new_pages)} pages (Total: {len(pages)})")
                     
-                    # Check if we've hit the limit
                     if limit and len(pages) >= limit:
                         pages = pages[:limit]
                         break
                     
-                    # Check for more pages
                     if 'continue' in data:
                         continue_param = data['continue']
                     else:
@@ -474,6 +537,11 @@ class WikiScraper:
             except Exception as e:
                 logger.error(f"Error in batch download: {e}")
                 break
+        
+        # Save to cache if successful
+        if pages:
+            self._save_cache(OLD_ENGLISH_CATEGORY, pages)
+            logger.info(f"Cached {len(pages)} pages for future use")
         
         logger.info(f"Downloaded {len(pages)} Old English terms")
         return pages
@@ -513,4 +581,159 @@ class WikiScraper:
         except Exception as e:
             logger.error(f"Error extracting Old English data from {page_data.get('title', 'unknown')}: {e}")
             return {}
+
+    def download_latin_terms(self, limit: Optional[int] = None) -> List[Dict]:
+        """Download Latin terms with IPA pronunciation"""
+        # Try loading from cache first
+        cache_path = self._get_cache_path("Latin_terms_with_IPA_pronunciation")
+        if cache_path.exists():
+            with open(cache_path, 'rb') as f:
+                cached_pages = pickle.load(f)
+                logger.info(f"Loaded {len(cached_pages)} Latin terms from cache")
+                return cached_pages[:limit] if limit else cached_pages
+
+        logger.info("No cache found, downloading Latin terms from Wiktionary...")
+        pages = []
+        continue_param = None
+        batch_count = 0
+        
+        try:
+            while True:
+                # Implement batch delays
+                if batch_count > 0:
+                    logger.info(f"Waiting {self.batch_delay}s between batches...")
+                    time.sleep(self.batch_delay)
+                
+                params = {
+                    'action': 'query',
+                    'format': 'json',
+                    'generator': 'categorymembers',
+                    'gcmtitle': 'Category:Latin_terms_with_IPA_pronunciation',
+                    'gcmlimit': min(self.batch_size, limit - len(pages) if limit else self.batch_size),
+                    'prop': 'revisions',
+                    'rvprop': 'content|ids|timestamp',
+                    'rvslots': 'main'
+                }
+                
+                if continue_param:
+                    params.update(continue_param)
+                
+                # Make request with retry logic
+                for attempt in range(self.max_retries):
+                    try:
+                        response = self.session.get(self.BASE_API_URL, params=params)
+                        response.raise_for_status()
+                        data = response.json()
+                        break
+                    except requests.exceptions.RequestException as e:
+                        if attempt < self.max_retries - 1:
+                            logger.warning(f"Request failed (attempt {attempt + 1}/{self.max_retries}), waiting {self.retry_delay}s...")
+                            time.sleep(self.retry_delay)
+                        else:
+                            logger.error(f"Failed after {self.max_retries} attempts: {e}")
+                            time.sleep(self.error_delay)
+                            raise
+                
+                # Process response
+                if 'query' in data and 'pages' in data['query']:
+                    new_pages = list(data['query']['pages'].values())
+                    pages.extend(new_pages)
+                    batch_count += 1
+                    
+                    logger.info(f"Batch {batch_count}: Downloaded {len(new_pages)} pages (Total: {len(pages)})")
+                    
+                    if limit and len(pages) >= limit:
+                        pages = pages[:limit]
+                        break
+                
+                if 'continue' not in data:
+                    break
+                    
+                continue_param = data['continue']
+                time.sleep(self.delay)
+            
+            # Save to cache if we got data
+            if pages:
+                with open(cache_path, 'wb') as f:
+                    pickle.dump(pages, f)
+                logger.info(f"Cached {len(pages)} Latin terms for future use")
+            
+            return pages
+            
+        except Exception as e:
+            logger.error(f"Error downloading Latin terms: {e}")
+            return []
+
+    def extract_latin_data(self, page_data: Dict) -> Dict:
+        """Extract Latin term data with IPA pronunciation"""
+        try:
+            if 'revisions' not in page_data or not page_data['revisions']:
+                return {}
+            
+            content = page_data['revisions'][0]['slots']['main']['*']
+            title = page_data.get('title', '')
+            
+            # Extract Latin section
+            latin_section = re.search(r'==Latin==\s*(.*?)(?=\n==|\Z)', content, re.DOTALL)
+            if not latin_section:
+                return {}
+            
+            latin_content = latin_section.group(1)
+            
+            # Extract IPA
+            ipa_match = re.search(r'\* IPA(?:\(key\))?: /([^/]+)/', latin_content)
+            pronunciation = ipa_match.group(1) if ipa_match else None
+            
+            # Extract part of speech and definition
+            pos_section = re.search(r'===(?:Noun|Verb|Adjective|Adverb|Pronoun)===\s*#\s*(.+?)(?=\n[^#]|\Z)', latin_content, re.DOTALL)
+            definition = pos_section.group(1).strip() if pos_section else None
+            
+            return {
+                'title': title,
+                'original_characters': title,
+                'ipa_phoneme': pronunciation,
+                'english_translation': definition,
+                'raw_content': latin_content
+            }
+            
+        except Exception as e:
+            logger.error(f"Error extracting Latin data from {page_data.get('title', 'unknown')}: {e}")
+            return {}
+
+    def _make_request(self, params: Dict) -> Optional[requests.Response]:
+        """Make a request to the Wiktionary API with retry logic"""
+        for attempt in range(self.max_retries):
+            try:
+                response = self.session.get(self.BASE_API_URL, params=params)
+                response.raise_for_status()
+                return response
+            except requests.exceptions.RequestException as e:
+                if attempt < self.max_retries - 1:
+                    logger.warning(f"Request failed (attempt {attempt + 1}/{self.max_retries}), waiting {self.retry_delay}s...")
+                    time.sleep(self.retry_delay)
+                else:
+                    logger.error(f"Failed after {self.max_retries} attempts: {e}")
+                    return None
+        return None
+
+    def _get_page_contents(self, titles: List[str]) -> List[Dict]:
+        """Get full page content for a list of titles"""
+        pages = []
+        for i in range(0, len(titles), 50):  # Process in chunks of 50
+            batch = titles[i:i + 50]
+            params = {
+                'action': 'query',
+                'format': 'json',
+                'titles': '|'.join(batch),
+                'prop': 'revisions',
+                'rvprop': 'content|ids|timestamp',
+                'rvslots': 'main'
+            }
+            
+            response = self._make_request(params)
+            if response and 'query' in response.json():
+                pages.extend(list(response.json()['query']['pages'].values()))
+            time.sleep(self.delay)
+        
+        return pages
 

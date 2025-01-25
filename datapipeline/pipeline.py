@@ -12,7 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from wikiscrape import WikiScraper
 from datetime import datetime
 import time
-from parser import PIEParser
+from parser import PIEParser, OldEnglishParser, LatinParser
 
 # Configure logging
 logging.basicConfig(
@@ -24,8 +24,9 @@ logging.basicConfig(
     ]
 )
 
-# Reduce logging from external libraries
+# Reduce noise from HTTP libraries even further
 logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
 logging.getLogger('anthropic').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
@@ -211,31 +212,117 @@ class WikiDataSource(DataSource):
             content = page_data['revisions'][0]['slots']['main']['*']
             title = page_data.get('title', '')
             
-            # Extract Old English section and IPA
-            oe_section = re.search(r'==Old English==\s*(.*?)(?=\n==|\Z)', content, re.DOTALL)
+            # Extract Old English section
+            oe_section = re.search(r'==\s*Old English\s*==\s*(.*?)(?=\n==[^=]|\Z)', content, re.DOTALL)
             if not oe_section:
+                logger.debug(f"No Old English section found in {title}")
                 return {}
             
-            oe_content = oe_section.group(1)
+            # Prepare raw data for parsing
+            raw_data = {
+                'title': title,
+                'raw_content': oe_section.group(1),
+                'original_characters': title
+            }
+            
+            # Use Claude to parse the content
+            parser = OldEnglishParser()
+            parsed = parser.parse_entry(raw_data)
+            
+            # Combine results
+            result = {
+                'title': title,
+                'original_characters': title,
+                'ipa_phoneme': parsed.get('ipa_phoneme'),
+                'english_translation': parsed.get('english_translation'),
+                'raw_content': oe_section.group(1)
+            }
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error extracting Old English data from {page_data.get('title', 'unknown')}: {e}")
+            return {}
+
+    def download_latin_terms(self, limit: int = None) -> List[Dict]:
+        """Download Latin terms with IPA pronunciation"""
+        category = "Category:Latin_terms_with_IPA_pronunciation"
+        pages = []
+        
+        try:
+            params = {
+                "action": "query",
+                "format": "json",
+                "list": "categorymembers",
+                "cmtitle": category,
+                "cmlimit": self.scraper.batch_size,
+                "cmtype": "page"
+            }
+            
+            if limit:
+                params["cmlimit"] = min(limit, self.scraper.batch_size)
+            
+            while True:
+                response = self.scraper.session.get(self.scraper.BASE_API_URL, params=params)
+                if not response:
+                    break
+                    
+                data = response.json()
+                batch = data["query"]["categorymembers"]
+                pages.extend(batch)
+                
+                if limit and len(pages) >= limit:
+                    pages = pages[:limit]
+                    break
+                    
+                if "continue" not in data:
+                    break
+                    
+                params["cmcontinue"] = data["continue"]["cmcontinue"]
+                time.sleep(self.scraper.batch_delay)
+            
+            # Get full page content for each term
+            content_pages = self.scraper._get_page_contents([p["title"] for p in pages])
+            return content_pages
+            
+        except Exception as e:
+            logger.error(f"Error downloading Latin terms: {e}")
+            return []
+
+    def extract_latin_data(self, page_data: Dict) -> Dict:
+        """Extract Latin term data with IPA pronunciation"""
+        try:
+            if 'revisions' not in page_data or not page_data['revisions']:
+                return {}
+            
+            content = page_data['revisions'][0]['slots']['main']['*']
+            title = page_data.get('title', '')
+            
+            # Extract Latin section
+            latin_section = re.search(r'==Latin==\s*(.*?)(?=\n==|\Z)', content, re.DOTALL)
+            if not latin_section:
+                return {}
+            
+            latin_content = latin_section.group(1)
             
             # Extract IPA
-            ipa_match = re.search(r'\* IPA(?:\(key\))?: /([^/]+)/', oe_content)
+            ipa_match = re.search(r'\* IPA(?:\(key\))?: /([^/]+)/', latin_content)
             pronunciation = ipa_match.group(1) if ipa_match else None
             
-            # Extract definition/meaning
-            definition_section = re.search(r'===(?:Noun|Verb|Adjective|Adverb)===\s*#\s*(.+?)(?=\n[^#]|\Z)', oe_content, re.DOTALL)
-            definition = definition_section.group(1).strip() if definition_section else None
+            # Extract part of speech and definition
+            pos_section = re.search(r'===(?:Noun|Verb|Adjective|Adverb|Pronoun)===\s*#\s*(.+?)(?=\n[^#]|\Z)', latin_content, re.DOTALL)
+            definition = pos_section.group(1).strip() if pos_section else None
             
             return {
                 'title': title,
                 'original_characters': title,
                 'ipa_phoneme': pronunciation,
                 'english_translation': definition,
-                'raw_content': oe_content
+                'raw_content': latin_content
             }
             
         except Exception as e:
-            logger.error(f"Error extracting Old English data from {page_data.get('title', 'unknown')}: {e}")
+            logger.error(f"Error extracting Latin data from {page_data.get('title', 'unknown')}: {e}")
             return {}
 
 class DataPreprocessor:
@@ -287,96 +374,50 @@ class LanguagePipeline:
             path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Ensured directory exists: {path}")
 
-    def process_source(self, source: DataSource, limit: int = None, timeout: int = None) -> pd.DataFrame:
-        """Process a single data source with two-phase parsing"""
-        if isinstance(source, WikiDataSource):
-            # Check for cached data first
-            cache_dir = Path('datapipeline/data/raw')
-            cached_files = list(cache_dir.glob('pie_roots_raw_*.csv'))
-            
-            use_cache = False
-            if cached_files:
-                latest_cache = max(cached_files, key=lambda x: x.stat().st_mtime)
-                try:
-                    # Try to read the cache file
-                    raw_df = pd.read_csv(latest_cache)
-                    if len(raw_df) > 0 and 'title' in raw_df.columns:
-                        print(f"\nUsing cached data from {latest_cache.name}")
-                        print(f"Found {len(raw_df)} entries in cache")
-                        print(f"Columns in cache: {raw_df.columns.tolist()}")
-                        print("\nSample entries:")
-                        for _, row in raw_df.head(3).iterrows():
-                            print(f"- {row['title']}")
-                        use_cache = True
-                    else:
-                        print(f"\nCache file {latest_cache.name} appears to be empty or corrupted")
-                except Exception as e:
-                    print(f"\nError reading cache file {latest_cache.name}: {e}")
-            
-            if not use_cache:
-                # Download fresh data
-                print("\nDownloading fresh data...")
-                raw_pages = source.scraper.download_pie_roots(limit=limit)
+    def process_language_terms(self, source: WikiDataSource, parser_class, language: str, limit: int = None) -> pd.DataFrame:
+        """Process terms for a specific language"""
+        try:
+            # Download and extract data based on language
+            if language.lower() == "latin":
+                pages = source.scraper.download_latin_terms(limit=limit)
                 raw_data = []
-                for page in raw_pages:
-                    extracted = source.scraper.extract_raw_pie_data(page)
+                for page in pages:
+                    extracted = source.scraper.extract_latin_data(page)
                     if extracted:
                         raw_data.append(extracted)
-                
-                raw_df = pd.DataFrame(raw_data)
-                logger.info(f"Downloaded {len(raw_df)} raw entries")
-                
-                # Save raw data
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                cache_path = f'datapipeline/data/raw/pie_roots_raw_{timestamp}.csv'
-                raw_df.to_csv(cache_path, index=False)
-                print(f"Saved fresh data to {cache_path}")
+            else:
+                raise ValueError(f"Unsupported language: {language}")
             
-            # Parse with Claude
-            try:
-                parser = PIEParser()
-                parsed_data = []
-                success_count = 0
-                error_count = 0
-                
-                print(f"\nProcessing {len(raw_df)} entries...")
-                for idx, row in enumerate(raw_df.iterrows(), 1):
-                    try:
-                        parsed = parser.parse_entry(row[1].to_dict())
-                        parsed['original_characters'] = row[1]['original_characters']
-                        parsed_data.append(parsed)
-                        if any(parsed.values()):
-                            success_count += 1
-                        if idx % 10 == 0:  # Progress update every 10 entries
-                            print(f"Processed {idx}/{len(raw_df)} entries...", end='\r')
-                    except Exception as e:
-                        error_count += 1
-                        parsed_data.append({
-                            'original_characters': row[1]['original_characters'],
-                            'ipa_phoneme': None,
-                            'english_translation': None,
-                            'description': None
-                        })
-                
-                print(f"\nCompleted processing with {success_count} successes and {error_count} errors")
-                df = pd.DataFrame(parsed_data)
-                
-            except Exception as e:
-                logger.error(f"Error in parsing phase: {e}")
-                df = raw_df
-        else:
-            df = source.read_data()
-        
-        # Validate schema
-        if not source.validate_schema(df):
-            raise ValueError("Data does not match required schema")
-        
-        # Preprocess data
-        df = self.preprocessor.clean_data(df)
-        df = self.preprocessor.standardize_ipa(df)
-        df = self.preprocessor.validate_translations(df)
-        
-        return df
+            if not raw_data:
+                logger.warning(f"No valid {language} terms found")
+                return pd.DataFrame()
+            
+            logger.info(f"Found {len(raw_data)} valid {language} terms after filtering")
+            
+            # Initialize parser
+            parser = parser_class()
+            
+            # Process in batches
+            batch_size = min(10, len(raw_data))  # Default batch size or smaller if less data
+            parsed_data = []
+            
+            for i in range(0, len(raw_data), batch_size):
+                batch = raw_data[i:i + batch_size]
+                if batch:
+                    parsed_batch = parser.parse_batch(batch, len(batch))
+                    parsed_data.extend(parsed_batch)
+            
+            # Create DataFrame and drop duplicates
+            df = pd.DataFrame(parsed_data)
+            if not df.empty:
+                df = df.drop_duplicates(subset=['title'])
+            
+            print(f"Final unique entries: {len(df)}")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error in {language} processing: {e}")
+            return pd.DataFrame()
 
     def save_processed_data(self, df: pd.DataFrame, language: str, output_format: str = 'csv'):
         """Save processed data with proper Unicode encoding"""
@@ -396,64 +437,101 @@ class LanguagePipeline:
         df.to_csv(input_path, index=False, encoding='utf-8')
         logger.info(f"Raw data saved to {input_path}")
 
-    def process_old_english(self, source: WikiDataSource, limit: int = None) -> pd.DataFrame:
-        """Process Old English terms specifically"""
-        try:
-            # Download and extract data
-            pages = source.download_old_english_terms(limit=limit)
-            
-            parsed_data = []
-            success_count = 0
-            error_count = 0
-            
-            for page in pages:
-                try:
-                    extracted = source.extract_old_english_data(page)
-                    if extracted:
-                        parsed_data.append(extracted)
-                        success_count += 1
-                    else:
-                        error_count += 1
-                except Exception as e:
-                    logger.error(f"Error processing page {page.get('title', 'unknown')}: {e}")
-                    error_count += 1
-            
-            print(f"\nCompleted processing with {success_count} successes and {error_count} errors")
-            return pd.DataFrame(parsed_data)
-            
-        except Exception as e:
-            logger.error(f"Error in Old English processing: {e}")
-            return pd.DataFrame()
-
 def main():
     pipeline = LanguagePipeline()
     
-    # Configure scraper for Old English terms
-    wiki_source = WikiDataSource("Old_English_terms_with_IPA_pronunciation")
-    wiki_source.scraper.delay = 1.0
-    wiki_source.scraper.batch_size = 50
-    wiki_source.scraper.batch_delay = 3
+    # Configure scraper for Latin dataset
+    wiki_source = WikiDataSource("Latin_terms_with_IPA_pronunciation")
+    wiki_source.scraper.delay = 0.5
+    wiki_source.scraper.batch_size = 500
+    wiki_source.scraper.batch_delay = 1
     
-    print("\nStarting Old English term extraction...")
-    processed_data = pipeline.process_old_english(wiki_source, limit=None)
+    # Test different batch sizes
+    print("\nStarting batch size comparison test...")
+    batch_sizes = [1, 5, 10, 50]
+    results = {}
     
-    # Save with timestamp
+    # First download all the data we'll need
+    print("\nDownloading test data...")
+    max_entries = max(batch_sizes)
+    all_pages = wiki_source.scraper.download_latin_terms(limit=max_entries)
+    
+    if not all_pages:
+        print("No data found. Please check the connection or cache.")
+        return
+        
+    print(f"Downloaded {len(all_pages)} entries for testing")
+    
+    for batch_size in batch_sizes:
+        print(f"\nTesting batch size: {batch_size}")
+        start_time = time.time()
+        
+        # Take subset for this batch size
+        test_pages = all_pages[:batch_size]
+        
+        # Process batch
+        processed_data = pipeline.process_language_terms(
+            source=wiki_source,
+            parser_class=LatinParser,
+            language="latin",
+            limit=batch_size
+        )
+        
+        processing_time = time.time() - start_time
+        
+        # Calculate metrics
+        if not processed_data.empty:
+            results[batch_size] = {
+                'processing_time': processing_time,
+                'success_rate': len(processed_data) / batch_size * 100,
+                'ipa_success_rate': processed_data['ipa_phoneme'].notna().mean() * 100,
+                'translation_success_rate': processed_data['english_translation'].notna().mean() * 100,
+                'time_per_entry': processing_time / batch_size,
+                'sample_entries': processed_data.head(3).to_dict('records')
+            }
+            
+            # Print results
+            print(f"\nResults for batch size {batch_size}:")
+            print(f"Processing time: {processing_time:.2f}s")
+            print(f"Success rate: {results[batch_size]['success_rate']:.1f}%")
+            print(f"IPA success rate: {results[batch_size]['ipa_success_rate']:.1f}%")
+            print(f"Translation success rate: {results[batch_size]['translation_success_rate']:.1f}%")
+            print(f"Time per entry: {results[batch_size]['time_per_entry']:.2f}s")
+            
+            if not processed_data.empty:
+                print("\nSample parsed entry:")
+                print(json.dumps(processed_data.iloc[0].to_dict(), indent=2))
+    
+    # Save detailed results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"Old_English_terms_{timestamp}"
-    pipeline.save_processed_data(processed_data, filename)
+    output_path = f'datapipeline/data/output/latin_batch_test_results_{timestamp}.json'
+    with open(output_path, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"\nDetailed results saved to {output_path}")
     
-    # Print summary
-    print(f"\nProcessing Summary:")
-    print(f"Total entries: {len(processed_data)}")
+    # Print comparative summary
+    print("\nComparative Summary:")
+    print("\nBatch Size | Time/Entry | Success % | IPA % | Translation %")
+    print("-" * 60)
+    for size in batch_sizes:
+        if size in results:
+            r = results[size]
+            print(f"{size:^10} | {r['time_per_entry']:^10.2f} | {r['success_rate']:^8.1f} | "
+                  f"{r['ipa_success_rate']:^5.1f} | {r['translation_success_rate']:^12.1f}")
+    output_path = f'datapipeline/data/output/latin_batch_test_results_{timestamp}.json'
+    with open(output_path, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"\nDetailed results saved to {output_path}")
     
-    for field in ['ipa_phoneme', 'english_translation']:
-        present = processed_data[field].notna()
-        print(f"\n{field.replace('_', ' ').title()}:")
-        print(f"- Count: {present.sum()} ({present.mean():.1%})")
-        if present.any():
-            print("- Sample values:")
-            for val in processed_data[field][present].head():
-                print(f"  * {val[:100]}...")
+    # Print comparative summary
+    print("\nComparative Summary:")
+    print("\nBatch Size | Time/Entry | Success % | IPA % | Translation %")
+    print("-" * 60)
+    for size in batch_sizes:
+        if size in results:
+            r = results[size]
+            print(f"{size:^10} | {r['time_per_entry']:^10.2f} | {r['success_rate']:^8.1f} | "
+                  f"{r['ipa_success_rate']:^5.1f} | {r['translation_success_rate']:^12.1f}")
 
 if __name__ == "__main__":
     main()
