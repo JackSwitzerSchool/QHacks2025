@@ -9,15 +9,19 @@
 </head>
 <body>
     <header>
-        <h1>Future Language Predictor</h1>
+        <h1>Chrono_</h1>
     </header>
     <main>
         <div class="card">
             <form id="language-form">
                 <label for="language-select">Select Future Language:</label>
                 <select id="language-select" name="language">
-                    <option value="future_english">Future English</option>
+                    <option value="PIE">Proto-Indo-European</option>
                     <option value="old_english">Old English</option>
+                    <option value="us_english">US English</option>
+                    <option value="british_english">British English</option>
+                    <option value="future_english_1000">Future English + 1000 years</option>
+                    <option value="future_english_2000">Future English + 2000 years</option>
                     <option value="future_toronto">Future Toronto Slang</option>
                 </select>
 
@@ -25,8 +29,8 @@
                 <textarea id="user-input" name="user_input" rows="5" placeholder="Speak or type your message here..."></textarea>
 
                 <div class="mic-buttons">
-                    <button type="button" id="start-mic">🎤 Start Recording</button>
-                    <button type="button" id="stop-mic">🛑 Stop Recording</button>
+                    <button type="button" id="start-mic">Start Recording</button>
+                    <button type="button" id="stop-mic">Stop Recording</button>
                 </div>
 
                 <button type="submit">Submit</button>
@@ -35,7 +39,23 @@
 
         <section id="response" class="card">
             <h2>Response:</h2>
-            <p id="response-text">Your response will appear here...</p>
+            <div class="prediction-result">
+                <div class="confidence-meter">
+                    <div class="confidence-bar"></div>
+                    <span class="confidence-text"></span>
+                </div>
+                <div class="predicted-text"></div>
+            </div>
+
+            <div class="timeline-translations">
+                <h3>Historical Timeline:</h3>
+                <div class="timeline-entries"></div>
+            </div>
+
+            <div class="nearest-matches">
+                <h3>Similar Words:</h3>
+                <div class="matches-list"></div>
+            </div>
         </section>
     </main>
 
@@ -82,11 +102,55 @@
                 contentType: "application/json",
                 data: JSON.stringify(formData),
                 success: function (response) {
-                    $("#response-text").text(response.predicted_text);
+                    // Update confidence meter
+                    const confidencePercent = (response.confidence_score * 100).toFixed(1);
+                    $(".confidence-bar").css("width", `${confidencePercent}%`);
+                    $(".confidence-text").text(`Confidence: ${confidencePercent}%`);
+                    
+                    // Update main prediction
+                    $(".predicted-text").html(`
+                        <div class="prediction-entry">
+                            <span class="original">Original: ${response.original_text}</span>
+                            <span class="ipa">IPA: ${response.predicted_text}</span>
+                            <span class="time-period">Time: ${response.time_period}</span>
+                        </div>
+                    `);
+
+                    // Clear and update timeline entries
+                    const timelineDiv = $(".timeline-entries");
+                    timelineDiv.empty();
+                    
+                    // Sort nearest matches by time period
+                    const sortedMatches = response.nearest_matches.sort((a, b) => a.time_period - b.time_period);
+                    
+                    // Create timeline entries
+                    sortedMatches.forEach(match => {
+                        timelineDiv.append(`
+                            <div class="timeline-entry">
+                                <span class="time">${match.time_period}</span>
+                                <span class="word">${match.word}</span>
+                                <span class="ipa">${match.ipa}</span>
+                                <span class="similarity">${(100 * (1 - match.distance)).toFixed(1)}% match</span>
+                            </div>
+                        `);
+                    });
+
+                    // Update similar words section
+                    const matchesDiv = $(".matches-list");
+                    matchesDiv.empty();
+                    response.nearest_matches.forEach(match => {
+                        matchesDiv.append(`
+                            <div class="match-entry">
+                                <span class="word">${match.word}</span>
+                                <span class="ipa">${match.ipa}</span>
+                                <span class="similarity">${(100 * (1 - match.distance)).toFixed(1)}% match</span>
+                            </div>
+                        `);
+                    });
                 },
                 error: function (error) {
                     console.error("Error:", error);
-                    $("#response-text").text("Error processing your request.");
+                    $(".predicted-text").text("Error processing your request.");
                 }
             });
         });

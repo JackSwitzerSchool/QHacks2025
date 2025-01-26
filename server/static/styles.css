@@ -2,13 +2,13 @@
 body {
     margin: 0;
     padding: 0;
-    font-family: 'Arial', sans-serif;
-    background-color: #f0f4f8;
+    font-family: 'Courier New', sans-serif;
+    background-color: #ffffff;
     color: #333;
 }
 
 header {
-    background-color: #4a4e69;
+    background-color: #215E99;
     color: white;
     padding: 1.5rem;
     text-align: center;
@@ -47,28 +47,31 @@ select, textarea {
     border: 1px solid #ced4da;
     border-radius: 5px;
     font-size: 1rem;
+    font-family: 'Courier New', sans-serif;
     transition: border-color 0.3s;
 }
 
 select:focus, textarea:focus {
-    border-color: #4a4e69;
+    border-color: #78206E;
     outline: none;
-    box-shadow: 0 0 5px rgba(74, 78, 105, 0.5);
+    box-shadow: 0 0 5px rgba(120, 32, 110, 0.5);
 }
 
 button {
-    background-color: #4a4e69;
+    background-color: #78206E;
     color: white;
     border: none;
     padding: 0.75rem 1.5rem;
     font-size: 1rem;
+    font-family: 'Courier New', sans-serif;
+    font-weight: bold;
     border-radius: 5px;
     cursor: pointer;
     transition: background-color 0.3s, transform 0.2s;
 }
 
 button:hover {
-    background-color: #3e405a;
+    background-color: #215E99;
     transform: scale(1.05);
 }
 
@@ -82,18 +85,18 @@ button:active {
 }
 
 #start-mic {
-    background-color: #28a745;
+    background-color: #215E99;
 }
 
 #stop-mic {
-    background-color: #dc3545;
+    background-color: #215E99;
 }
 
 #response {
     padding: 1rem;
-    border: 1px solid #ced4da;
+    border: 1px solid #78206E;
     border-radius: 5px;
-    background-color: #f1f3f5;
+    background-color: #ffffff;
     text-align: center;
 }
 
@@ -105,4 +108,97 @@ button:active {
 #response-text {
     font-size: 1.25rem;
     color: #495057;
+}
+
+.chrono-text {
+    font-family: 'Courier New', sans-serif;
+    font-weight: bold;
+    font-size: 2.5rem;
+}
+
+.prediction-result {
+    margin-bottom: 2rem;
+}
+
+.confidence-meter {
+    background-color: #f0f0f0;
+    border-radius: 10px;
+    height: 20px;
+    margin: 1rem 0;
+    overflow: hidden;
+    position: relative;
+}
+
+.confidence-bar {
+    background-color: #215E99;
+    height: 100%;
+    transition: width 0.5s ease-in-out;
+    width: 0;
+}
+
+.confidence-text {
+    color: #333;
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+    display: block;
+}
+
+.timeline-translations, .nearest-matches {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid #ced4da;
+}
+
+.timeline-entry, .match-entry {
+    background-color: #f8f9fa;
+    border-radius: 5px;
+    margin: 0.5rem 0;
+    padding: 1rem;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 1rem;
+    align-items: center;
+}
+
+.timeline-entry .time {
+    font-weight: bold;
+    color: #215E99;
+}
+
+.timeline-entry .word, .match-entry .word {
+    font-size: 1.1rem;
+}
+
+.timeline-entry .ipa, .match-entry .ipa {
+    font-family: 'Courier New', monospace;
+    color: #78206E;
+}
+
+.timeline-entry .similarity, .match-entry .similarity {
+    font-size: 0.9rem;
+    color: #666;
+}
+
+.prediction-entry {
+    display: grid;
+    gap: 0.5rem;
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 5px;
+    margin-top: 1rem;
+}
+
+.prediction-entry span {
+    display: block;
+}
+
+.prediction-entry .ipa {
+    font-size: 1.2rem;
+    color: #78206E;
+    font-family: 'Courier New', monospace;
+}
+
+.prediction-entry .time-period {
+    color: #215E99;
+    font-weight: bold;
 }
