@@ -132,52 +132,68 @@
                 contentType: "application/json",
                 data: JSON.stringify(formData),
                 success: function (response) {
+                    // Update confidence meter
                     const confidencePercent = (response.confidence_score * 100).toFixed(1);
                     $(".confidence-bar").css("width", `${confidencePercent}%`);
                     $(".confidence-text").text(`Overall Confidence: ${confidencePercent}%`);
                     
+                    // Update sentence-level prediction
                     $(".sentence-original").text(`Original: ${response.original_text}`);
-                    $(".sentence-ipa").text(`IPA: ${response.predicted_text}`);
                     
-                    const wordList = $(".word-predictions-list");
-                    wordList.empty();
-                    
-                    response.word_predictions.forEach(word => {
-                        const wordConfidence = (word.confidence * 100).toFixed(1);
-                        wordList.append(`
-                            <div class="word-prediction-item">
-                                <div class="word-confidence-meter">
-                                    <div class="word-confidence-bar" style="width: ${wordConfidence}%"></div>
+                    // Show/hide IPA and historical elements based on language type
+                    if (response.is_modern) {
+                        $(".sentence-ipa").hide();
+                        $(".word-predictions").hide();
+                        $(".timeline-translations").hide();
+                    } else {
+                        $(".sentence-ipa").show().text(`IPA: ${response.predicted_text}`);
+                        
+                        // Update word-by-word breakdown
+                        const wordList = $(".word-predictions-list");
+                        wordList.empty();
+                        
+                        response.word_predictions.forEach(word => {
+                            const wordConfidence = (word.confidence * 100).toFixed(1);
+                            wordList.append(`
+                                <div class="word-prediction-item">
+                                    <div class="word-confidence-meter">
+                                        <div class="word-confidence-bar" style="width: ${wordConfidence}%"></div>
+                                    </div>
+                                    <div class="word-details">
+                                        <span class="word-original">${word.original}</span>
+                                        <span class="word-ipa">${word.ipa}</span>
+                                        <span class="word-confidence">${wordConfidence}%</span>
+                                    </div>
                                 </div>
-                                <div class="word-details">
-                                    <span class="word-original">${word.original}</span>
-                                    <span class="word-ipa">${word.ipa}</span>
-                                    <span class="word-confidence">${wordConfidence}%</span>
-                                </div>
-                            </div>
-                        `);
-                    });
+                            `);
+                        });
 
-                    const timelineDiv = $(".timeline-entries");
-                    timelineDiv.empty();
-                    
-                    response.nearest_matches.forEach(match => {
-                        const similarity = (100 * (1 - match.distance)).toFixed(1);
-                        timelineDiv.append(`
-                            <div class="timeline-entry">
-                                <div class="match-details">
-                                    <span class="time">Year: ${match.time_period}</span>
-                                    <span class="original-word">Original: ${match.original_word}</span>
-                                    <span class="match-word">Match: ${match.word}</span>
-                                    <span class="match-ipa">IPA: ${match.ipa}</span>
+                        // Update historical references
+                        const timelineDiv = $(".timeline-entries");
+                        timelineDiv.empty();
+                        
+                        response.nearest_matches.forEach(match => {
+                            const similarity = (100 * (1 - match.distance)).toFixed(1);
+                            timelineDiv.append(`
+                                <div class="timeline-entry">
+                                    <div class="match-details">
+                                        <span class="time">Year: ${match.time_period}</span>
+                                        <span class="original-word">Original: ${match.original_word}</span>
+                                        <span class="match-word">Match: ${match.word}</span>
+                                        <span class="match-ipa">IPA: ${match.ipa}</span>
+                                    </div>
+                                    <div class="match-similarity">
+                                        <span class="similarity-score">${similarity}% match</span>
+                                    </div>
                                 </div>
-                                <div class="match-similarity">
-                                    <span class="similarity-score">${similarity}% match</span>
-                                </div>
-                            </div>
-                        `);
-                    });
+                            `);
+                        });
+                        
+                        $(".word-predictions").show();
+                        $(".timeline-translations").show();
+                    }
 
+                    // Handle audio if available
                     if (response.audio) {
                         const audioSrc = `data:audio/mp3;base64,${response.audio}`;
                         const audio = $("#pronunciation-audio");

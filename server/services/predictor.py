@@ -71,15 +71,30 @@ class PredictionService:
             if language not in self.LANGUAGE_TIME_MAP:
                 raise PredictionError(f"Unsupported language selection: {language}")
             
-            # Get target time period
-            target_time = self.LANGUAGE_TIME_MAP[language]
-            
             # Clean input text
             text = text.strip().lower()
             if not text:
                 raise PredictionError("Empty input text")
-            
-            # Split into words and process each separately
+
+            # For modern English variants, use direct text-to-speech
+            if language in ["us_english", "british_english"]:
+                response = {
+                    "predicted_text": text,  # Use original text instead of IPA
+                    "time_period": self.LANGUAGE_TIME_MAP[language],
+                    "language": language,
+                    "original_text": text,
+                    "confidence_score": 1.0,  # High confidence for direct synthesis
+                    "is_modern": True,  # Add flag to indicate modern English
+                    "word_predictions": [{
+                        'original': word,
+                        'ipa': word,  # No IPA needed for direct synthesis
+                        'confidence': 1.0
+                    } for word in text.split()],
+                    "nearest_matches": []  # No historical matches needed
+                }
+                return response
+
+            # For historical/future predictions, use existing logic
             words = text.split()
             word_predictions = []
             total_confidence = 0
@@ -97,10 +112,10 @@ class PredictionService:
                 )
                 
                 # Predict IPA for the target time period
-                predicted_ipa = predict_ipa_for_time(target_time, neighbors_df)
+                predicted_ipa = predict_ipa_for_time(self.LANGUAGE_TIME_MAP[language], neighbors_df)
                 
                 # Apply any time-specific phonological rules
-                final_ipa = apply_phonological_rules(predicted_ipa, target_time)
+                final_ipa = apply_phonological_rules(predicted_ipa, self.LANGUAGE_TIME_MAP[language])
                 
                 # Store prediction and confidence
                 word_confidence = float(1.0 - min(distances) if len(distances) > 0 else 0.0)
@@ -134,7 +149,7 @@ class PredictionService:
             # Prepare response
             response = {
                 "predicted_text": final_ipa_sentence,
-                "time_period": target_time,
+                "time_period": self.LANGUAGE_TIME_MAP[language],
                 "language": language,
                 "original_text": text,
                 "confidence_score": float(avg_confidence),

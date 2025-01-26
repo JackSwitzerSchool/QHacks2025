@@ -51,8 +51,14 @@ def predict():
         # Get prediction with enhanced metadata
         result = get_predictor().predict(language, user_input)
         
-        # Generate audio for the IPA text
-        audio_data = get_polly().synthesize_ipa(result["predicted_text"])
+        # Generate audio based on language
+        if language in ["us_english", "british_english"]:
+            # Use direct synthesis for modern English
+            audio_data = get_polly().synthesize_direct(result["predicted_text"], language)
+        else:
+            # Use IPA synthesis for historical/future predictions
+            audio_data = get_polly().synthesize_ipa(result["predicted_text"])
+            
         if audio_data:
             result["audio"] = audio_data
         
