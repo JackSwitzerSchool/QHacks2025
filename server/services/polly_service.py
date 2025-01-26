@@ -11,7 +11,7 @@ class PollyService:
     VOICE_MAP = {
         "us_english": "Matthew",  # American English male voice
         "british_english": "Amy",  # British English female voice
-        "toronto_english": "Stephen",  # We'll use Stephen with custom SSML for Toronto
+        "toronto_english": "Joey",  # Standard engine male voice for Toronto
     }
 
     def __init__(self):
@@ -57,10 +57,9 @@ class PollyService:
             
             # Add Toronto-specific SSML modifications if needed
             if language == "toronto_english":
-                # Neural-compatible SSML following AWS documentation
                 ssml_text = f'''
                 <speak>
-                    <prosody rate="fast" pitch="high">
+                    <prosody rate="120%" pitch="+35%">
                         {text}
                     </prosody>
                 </speak>
@@ -70,11 +69,14 @@ class PollyService:
                 ssml_text = text
                 text_type = 'text'
             
+            # Use standard engine for Toronto to ensure SSML compatibility
+            engine = 'standard' if language == 'toronto_english' else 'neural'
+            
             response = self.polly.synthesize_speech(
                 Text=ssml_text,
                 TextType=text_type,
                 VoiceId=voice_id,
-                Engine='neural',
+                Engine=engine,
                 OutputFormat='mp3',
                 SampleRate='22050'
             )

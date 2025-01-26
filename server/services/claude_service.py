@@ -53,20 +53,25 @@ Provide only the translated text with no explanation:"""
             
             # Stage 2: Add phonetic markers
             phonetic_prompt = f"""You are a Toronto accent expert. Convert this Toronto slang text into IPA notation, 
-            maintaining authentic Toronto pronunciation features:
+            capturing authentic Toronto pronunciation features:
 
-1. Key Toronto accent features to include:
-   - Canadian raising: "about" → /əˈbʌʊt/
-   - T-flapping between vowels
-   - The "Canadian Shift" in vowels
-   - Rising intonation (mark with ↗ at end of sentences)
-   - Stress patterns typical of Toronto speech
-   - "th" → "d" in casual speech
-   - Dropped "g" in "-ing" words → /ɪn/
+1. Essential Toronto accent features to include:
+   - Canadian Raising: "about" → /ʌʊt/, "price" → /prʌɪs/
+   - Strong 'eh' endings: /eɪ/ 
+   - T-flapping between vowels: "better" → /bɛɾɚ/
+   - Canadian Shift vowels:
+     - 'trap' vowel retracted: "bad" → /bæ̠d/
+     - 'dress' vowel lowered: "bed" → /bɛ̞d/
+     - 'lot' vowel fronted: "hot" → /hɑ̟t/
+   - "th" becomes "d" in casual speech: "that" → /dæt/
+   - Dropped "g" in "-ing" words: "talking" → /tɔkɪn/
+   - Rising intonation at sentence end (mark with ↗)
+   - Stress first syllable more than standard English
+   - Merge "cot" and "caught": both /kɑt/
 
 Toronto slang text: "{toronto_text}"
 
-Provide only the IPA transcription with Toronto accent features. Include rising intonation marker ↗ where appropriate. Do NOT include any explanations or notes."""
+Provide ONLY the precise IPA transcription with Toronto accent features. Include rising intonation marker ↗ where appropriate. NO explanations."""
 
             # Get phonetic translation
             phonetic_response = self.client.messages.create(
