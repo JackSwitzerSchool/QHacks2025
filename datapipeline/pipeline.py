@@ -8,6 +8,7 @@ import os
 import sys
 import requests
 import re
+import pickle
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from wikiscrape import WikiScraper
 from datetime import datetime
@@ -359,7 +360,6 @@ class LanguagePipeline:
     
     def __init__(self):
         self.preprocessor = DataPreprocessor()
-        # Create data directories if they don't exist
         self._setup_directories()
 
     def _setup_directories(self):
@@ -374,164 +374,148 @@ class LanguagePipeline:
             path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Ensured directory exists: {path}")
 
-    def process_language_terms(self, source: WikiDataSource, parser_class, language: str, limit: int = None) -> pd.DataFrame:
-        """Process terms for a specific language"""
+    def process_language_terms(self, source: WikiDataSource, parser_class, language: str, batch_size: int) -> pd.DataFrame:
+        """Process terms for a specific language with specified batch size"""
         try:
-            # Download and extract data based on language
-            if language.lower() == "latin":
-                pages = source.scraper.download_latin_terms(limit=limit)
-                raw_data = []
-                for page in pages:
-                    extracted = source.scraper.extract_latin_data(page)
-                    if extracted:
-                        raw_data.append(extracted)
-            else:
-                raise ValueError(f"Unsupported language: {language}")
-            
-            if not raw_data:
-                logger.warning(f"No valid {language} terms found")
+            # Get raw data
+            pages = source.scraper.download_latin_terms(limit=batch_size)
+            if not pages:
+                logger.warning("No pages downloaded")
                 return pd.DataFrame()
             
-            logger.info(f"Found {len(raw_data)} valid {language} terms after filtering")
+            logger.info(f"Downloaded {len(pages)} pages")
             
-            # Initialize parser
+            # Extract raw data
+            raw_data = []
+            for page in pages:
+                extracted = source.scraper.extract_latin_data(page)
+                if extracted:
+                    raw_data.append(extracted)
+            
+            return self.process_batch(raw_data, parser_class, language)
+            
+        except Exception as e:
+            logger.error(f"Error processing {language} terms: {str(e)}")
+            return pd.DataFrame()
+
+    def process_batch(self, raw_data: List[Dict], parser_class, language: str) -> pd.DataFrame:
+        """Process a batch of raw data through the parser"""
+        try:
+            # Process with Haiku
             parser = parser_class()
+            parsed_data = parser.parse_batch(raw_data, len(raw_data))
             
-            # Process in batches
-            batch_size = min(10, len(raw_data))  # Default batch size or smaller if less data
-            parsed_data = []
+            if not parsed_data:
+                logger.warning("No data parsed")
+                return pd.DataFrame()
             
-            for i in range(0, len(raw_data), batch_size):
-                batch = raw_data[i:i + batch_size]
-                if batch:
-                    parsed_batch = parser.parse_batch(batch, len(batch))
-                    parsed_data.extend(parsed_batch)
-            
-            # Create DataFrame and drop duplicates
+            # Create DataFrame
             df = pd.DataFrame(parsed_data)
-            if not df.empty:
-                df = df.drop_duplicates(subset=['title'])
             
-            print(f"Final unique entries: {len(df)}")
+            # Save raw data for this batch
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            raw_df = pd.DataFrame(raw_data)
+            raw_path = Path(self.preprocessor.config['INPUT_DIR']) / f"{language}_batch_{timestamp}_raw.csv"
+            raw_df.to_csv(raw_path, index=False, encoding='utf-8')
+            
             return df
             
         except Exception as e:
-            logger.error(f"Error in {language} processing: {e}")
+            logger.error(f"Error processing batch: {str(e)}")
             return pd.DataFrame()
 
-    def save_processed_data(self, df: pd.DataFrame, language: str, output_format: str = 'csv'):
-        """Save processed data with proper Unicode encoding"""
-        # Save to output directory (processed data)
-        output_dir = Path(self.preprocessor.config['OUTPUT_DIR'])
-        if output_format == 'csv':
-            output_path = output_dir / f"{language}_processed.csv"
-            df.to_csv(output_path, index=False, encoding='utf-8')
-        elif output_format == 'excel':
-            output_path = output_dir / f"{language}_processed.xlsx"
-            df.to_excel(output_path, index=False)
+    def save_processed_data(self, df: pd.DataFrame, filename: str):
+        """Save processed data with timestamp"""
+        # Save processed data
+        output_path = Path(self.preprocessor.config['OUTPUT_DIR']) / f"{filename}_processed.csv"
+        df.to_csv(output_path, index=False, encoding='utf-8')
         logger.info(f"Processed data saved to {output_path}")
 
-        # Save raw data to input directory (for training)
-        input_dir = Path(self.preprocessor.config['INPUT_DIR'])
-        input_path = input_dir / f"{language}_raw.csv"
-        df.to_csv(input_path, index=False, encoding='utf-8')
-        logger.info(f"Raw data saved to {input_path}")
+        # Save raw data
+        raw_path = Path(self.preprocessor.config['INPUT_DIR']) / f"{filename}_raw.csv"
+        df.to_csv(raw_path, index=False, encoding='utf-8')
+        logger.info(f"Raw data saved to {raw_path}")
 
 def main():
     pipeline = LanguagePipeline()
+    batch_size = 100  # Process 100 entries at a time
+    haiku_batch_size = 20  # 5 parallel calls of 20 each
     
-    # Configure scraper for Latin dataset
-    wiki_source = WikiDataSource("Latin_terms_with_IPA_pronunciation")
-    wiki_source.scraper.delay = 0.5
-    wiki_source.scraper.batch_size = 500
-    wiki_source.scraper.batch_delay = 1
+    print("\nStarting Latin terms processing pipeline...")
     
-    # Test different batch sizes
-    print("\nStarting batch size comparison test...")
-    batch_sizes = [1, 5, 10, 50]
-    results = {}
+    # Load from cache
+    source = WikiDataSource("Latin_terms_with_IPA_pronunciation")
+    cache_path = source.scraper._get_cache_path("Latin_terms_with_IPA_pronunciation")
     
-    # First download all the data we'll need
-    print("\nDownloading test data...")
-    max_entries = max(batch_sizes)
-    all_pages = wiki_source.scraper.download_latin_terms(limit=max_entries)
-    
-    if not all_pages:
-        print("No data found. Please check the connection or cache.")
+    if not cache_path.exists():
+        print("No cache found. Run the scraper first to build cache.")
         return
         
-    print(f"Downloaded {len(all_pages)} entries for testing")
+    with open(cache_path, 'rb') as f:
+        all_pages = pickle.load(f)
     
-    for batch_size in batch_sizes:
-        print(f"\nTesting batch size: {batch_size}")
-        start_time = time.time()
-        
-        # Take subset for this batch size
-        test_pages = all_pages[:batch_size]
-        
-        # Process batch
-        processed_data = pipeline.process_language_terms(
-            source=wiki_source,
-            parser_class=LatinParser,
-            language="latin",
-            limit=batch_size
-        )
-        
-        processing_time = time.time() - start_time
-        
-        # Calculate metrics
-        if not processed_data.empty:
-            results[batch_size] = {
-                'processing_time': processing_time,
-                'success_rate': len(processed_data) / batch_size * 100,
-                'ipa_success_rate': processed_data['ipa_phoneme'].notna().mean() * 100,
-                'translation_success_rate': processed_data['english_translation'].notna().mean() * 100,
-                'time_per_entry': processing_time / batch_size,
-                'sample_entries': processed_data.head(3).to_dict('records')
-            }
-            
-            # Print results
-            print(f"\nResults for batch size {batch_size}:")
-            print(f"Processing time: {processing_time:.2f}s")
-            print(f"Success rate: {results[batch_size]['success_rate']:.1f}%")
-            print(f"IPA success rate: {results[batch_size]['ipa_success_rate']:.1f}%")
-            print(f"Translation success rate: {results[batch_size]['translation_success_rate']:.1f}%")
-            print(f"Time per entry: {results[batch_size]['time_per_entry']:.2f}s")
-            
-            if not processed_data.empty:
-                print("\nSample parsed entry:")
-                print(json.dumps(processed_data.iloc[0].to_dict(), indent=2))
+    total_pages = len(all_pages)
+    print(f"\nTotal cached Latin terms: {total_pages}")
     
-    # Save detailed results
+    # Process in batches
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = f'datapipeline/data/output/latin_batch_test_results_{timestamp}.json'
-    with open(output_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"\nDetailed results saved to {output_path}")
+    output_file = f"Latin_terms_full_{timestamp}"
+    all_results = []
     
-    # Print comparative summary
-    print("\nComparative Summary:")
-    print("\nBatch Size | Time/Entry | Success % | IPA % | Translation %")
-    print("-" * 60)
-    for size in batch_sizes:
-        if size in results:
-            r = results[size]
-            print(f"{size:^10} | {r['time_per_entry']:^10.2f} | {r['success_rate']:^8.1f} | "
-                  f"{r['ipa_success_rate']:^5.1f} | {r['translation_success_rate']:^12.1f}")
-    output_path = f'datapipeline/data/output/latin_batch_test_results_{timestamp}.json'
-    with open(output_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"\nDetailed results saved to {output_path}")
-    
-    # Print comparative summary
-    print("\nComparative Summary:")
-    print("\nBatch Size | Time/Entry | Success % | IPA % | Translation %")
-    print("-" * 60)
-    for size in batch_sizes:
-        if size in results:
-            r = results[size]
-            print(f"{size:^10} | {r['time_per_entry']:^10.2f} | {r['success_rate']:^8.1f} | "
-                  f"{r['ipa_success_rate']:^5.1f} | {r['translation_success_rate']:^12.1f}")
+    for batch_start in range(0, total_pages, batch_size):
+        batch_end = min(batch_start + batch_size, total_pages)
+        current_pages = all_pages[batch_start:batch_end]
+        
+        print(f"\nProcessing batch {batch_start//batch_size + 1}/{(total_pages + batch_size - 1)//batch_size}")
+        print(f"Pages {batch_start} to {batch_end}")
+        
+        # Extract data for this batch
+        extracted_data = []
+        for page in current_pages:
+            data = source.scraper.extract_latin_data(page)
+            if data:
+                extracted_data.append(data)
+        
+        # Process all 5 Haiku calls for this batch
+        batch_results = []
+        for i in range(0, len(extracted_data), haiku_batch_size):
+            haiku_batch = extracted_data[i:i + haiku_batch_size]
+            processed_data = pipeline.process_batch(
+                haiku_batch,
+                parser_class=LatinParser,
+                language="latin"
+            )
+            if not processed_data.empty:
+                batch_results.append(processed_data)
+        
+        # Add batch results to overall results
+        if batch_results:
+            batch_df = pd.concat(batch_results, ignore_index=True)
+            all_results.append(batch_df)
+            print(f"Processed {len(batch_df)} entries (Total: {sum(len(df) for df in all_results)})")
+            print(f"IPA success rate: {(batch_df['ipa_phoneme'].notna().sum() / len(batch_df)) * 100:.1f}%")
+            print(f"Translation success rate: {(batch_df['english_translation'].notna().sum() / len(batch_df)) * 100:.1f}%")
+        
+        # Save after every 5 batches
+        if len(all_results) >= 5:
+            combined_df = pd.concat(all_results, ignore_index=True)
+            pipeline.save_processed_data(combined_df, output_file)
+            print(f"\nSaved {len(combined_df)} entries to file")
+            all_results = []  # Clear the results list
+
+    # Save any remaining results
+    if all_results:
+        combined_df = pd.concat(all_results, ignore_index=True)
+        pipeline.save_processed_data(combined_df, output_file)
+        print(f"\nSaved final {len(combined_df)} entries to file")
+
+    # Print final summary
+    final_df = pd.read_csv(Path(pipeline.preprocessor.config['OUTPUT_DIR']) / f"{output_file}_processed.csv")
+    print("\nFinal Processing Summary:")
+    print(f"Total entries processed: {len(final_df)}")
+    print(f"Unique terms: {final_df['original_characters'].nunique()}")
+    print(f"IPA success rate: {(final_df['ipa_phoneme'].notna().sum() / len(final_df)) * 100:.1f}%")
+    print(f"Translation success rate: {(final_df['english_translation'].notna().sum() / len(final_df)) * 100:.1f}%")
 
 if __name__ == "__main__":
     main()
