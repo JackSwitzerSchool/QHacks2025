@@ -99,15 +99,13 @@ button:active {
 
 .mic-buttons {
     display: flex;
+    gap: 1rem;
     justify-content: space-between;
 }
 
-#start-mic {
+#start-mic, #stop-mic {
     background-color: #215E99;
-}
-
-#stop-mic {
-    background-color: #215E99;
+    flex: 1;
 }
 
 #response {
