@@ -12,25 +12,28 @@
         <h1>Future Language Predictor</h1>
     </header>
     <main>
-        <form id="language-form">
-            <label for="language-select">Select Future Language:</label>
-            <select id="language-select" name="language">
-                <option value="future_english">Future English</option>
-                <option value="old_english">Old English</option>
-                <option value="future_toronto">Future Toronto Slang</option>
-            </select>
+        <div class="card">
+            <form id="language-form">
+                <label for="language-select">Select Future Language:</label>
+                <select id="language-select" name="language">
+                    <option value="future_english">Future English</option>
+                    <option value="old_english">Old English</option>
+                    <option value="future_toronto">Future Toronto Slang</option>
+                </select>
 
-            <div>
                 <label for="user-input">Speak or Type:</label>
-                <textarea id="user-input" name="user_input" rows="5" cols="50" placeholder="Speak or type your message here..."></textarea>
-                <button type="button" id="start-mic">🎤 Start Recording</button>
-                <button type="button" id="stop-mic">🛑 Stop Recording</button>
-            </div>
+                <textarea id="user-input" name="user_input" rows="5" placeholder="Speak or type your message here..."></textarea>
 
-            <button type="submit">Submit</button>
-        </form>
+                <div class="mic-buttons">
+                    <button type="button" id="start-mic">🎤 Start Recording</button>
+                    <button type="button" id="stop-mic">🛑 Stop Recording</button>
+                </div>
 
-        <section id="response">
+                <button type="submit">Submit</button>
+            </form>
+        </div>
+
+        <section id="response" class="card">
             <h2>Response:</h2>
             <p id="response-text">Your response will appear here...</p>
         </section>
