@@ -149,36 +149,57 @@ def find_nearest_vectors(
     return final_results, final_distances
 
 # -----------------------------------------------------------------------------
-# 6. PHONOLOGICAL FEATURE INVENTORY (12-D example)
+# 6. PHONOLOGICAL FEATURE INVENTORY (14-D)
 # -----------------------------------------------------------------------------
 phone_feature_map = {
-    # Format: [syllabic, consonantal, sonorant, continuant, voice, nasal, labial, coronal, dorsal, high, back, low, round, tense]
+    # [syll, cons, son, cont, voi, nas, lab, cor, dor, high, back, low, round, tense]
     
-    # Vowels
-    'ɒ': [1,0,1,1,1,0,0,0,1,0,1,1,1,0],  # open back rounded
-    'ɔ': [1,0,1,1,1,0,0,0,1,0,1,0,1,1],  # open-mid back rounded
-    'æ': [1,0,1,1,1,0,0,0,0,0,0,1,0,1],  # near-open front unrounded
-    'ʌ': [1,0,1,1,1,0,0,0,1,0,1,0,0,0],  # open-mid back unrounded
-    'ə': [1,0,1,1,1,0,0,0,0,0,0,0,0,0],  # schwa
-    'ɪ': [1,0,1,1,1,0,0,0,0,1,0,0,0,0],  # near-close front unrounded
-    'i': [1,0,1,1,1,0,0,0,0,1,0,0,0,1],  # close front unrounded
-    'u': [1,0,1,1,1,0,1,0,1,1,1,0,1,1],  # close back rounded
+    # Vowels with more precise features
+    'i':  [1,0,1,1,1,0,0,0,0,1,0,0,0,1],  # high front tense
+    'ɪ':  [1,0,1,1,1,0,0,0,0,1,0,0,0,0],  # high front lax
+    'e':  [1,0,1,1,1,0,0,0,0,0.7,0,0,0,1], # upper-mid front tense
+    'ɛ':  [1,0,1,1,1,0,0,0,0,0.3,0,0,0,0], # mid front lax
+    'æ':  [1,0,1,1,1,0,0,0,0,0,0,1,0,1],  # low front
+    'ʌ':  [1,0,1,1,1,0,0,0,1,0,1,0,0,0],  # mid back unrounded
+    'ɔ':  [1,0,1,1,1,0,0,0,1,0,1,0,1,1],  # mid back rounded
+    'u':  [1,0,1,1,1,0,1,0,1,1,1,0,1,1],  # high back rounded
+    'ə':  [1,0,1,1,1,0,0,0,0,0.5,0.5,0,0,0], # schwa
+    'ɑ':  [1,0,1,1,1,0,0,0,1,0,1,1,0,0],  # low back unrounded
+    'ʊ':  [1,0,1,1,1,0,1,0,1,1,1,0,1,0],  # near-high back rounded
+    'o':  [1,0,1,1,1,0,0,0,1,0.5,1,0,1,1], # mid back rounded
+    'a':  [1,0,1,1,1,0,0,0,1,0,0,1,0,1],  # low central
     
-    # Consonants
-    'd': [0,1,0,0,1,0,0,1,0,0,0,0,0,0],  # voiced alveolar stop
-    't': [0,1,0,0,0,0,0,1,0,0,0,0,0,0],  # voiceless alveolar stop
-    'g': [0,1,0,0,1,0,0,0,1,0,0,0,0,0],  # voiced velar stop
-    'k': [0,1,0,0,0,0,0,0,1,0,0,0,0,0],  # voiceless velar stop
-    'ŋ': [0,1,1,0,1,1,0,0,1,0,0,0,0,0],  # velar nasal
-    'ˈ': [0,0,0,0,0,0,0,0,0,0,0,0,0,0],  # primary stress
+    # Consonants with articulatory features
+    't':  [0,1,0,0,0,0,0,1,0,0,0,0,0,0],  # voiceless alveolar stop
+    'd':  [0,1,0,0,1,0,0,1,0,0,0,0,0,0],  # voiced alveolar stop
+    'ɾ':  [0,1,1,0,1,0,0,1,0,0,0,0,0,0],  # alveolar tap
+    'ð':  [0,1,0,1,1,0,0,1,0,0,0,0,0,0],  # voiced dental fricative
+    'θ':  [0,1,0,1,0,0,0,1,0,0,0,0,0,0],  # voiceless dental fricative
+    'ŋ':  [0,1,1,0,1,1,0,0,1,0,0,0,0,0],  # velar nasal
+    'ʃ':  [0,1,0,1,0,0,0,1,0,1,0,0,0,0],  # post-alveolar fricative
+    'ʒ':  [0,1,0,1,1,0,0,1,0,1,0,0,0,0],  # voiced post-alveolar fricative
+    'p':  [0,1,0,0,0,0,1,0,0,0,0,0,0,0],  # voiceless bilabial stop
+    'b':  [0,1,0,0,1,0,1,0,0,0,0,0,0,0],  # voiced bilabial stop
+    'f':  [0,1,0,1,0,0,1,0,0,0,0,0,0,0],  # voiceless labiodental fricative
+    'v':  [0,1,0,1,1,0,1,0,0,0,0,0,0,0],  # voiced labiodental fricative
+    'm':  [0,1,1,0,1,1,1,0,0,0,0,0,0,0],  # bilabial nasal
+    'n':  [0,1,1,0,1,1,0,1,0,0,0,0,0,0],  # alveolar nasal
+    'l':  [0,1,1,1,1,0,0,1,0,0,0,0,0,0],  # alveolar lateral
+    'r':  [0,1,1,1,1,0,0,1,0,0,0,0,0,0],  # alveolar approximant
+    'w':  [0,0,1,1,1,0,1,0,1,1,1,0,1,0],  # labial-velar approximant
+    'j':  [0,0,1,1,1,0,0,0,1,1,0,0,0,0],  # palatal approximant
+    'h':  [0,0,0,1,0,0,0,0,0,0,0,0,0,0],  # glottal fricative
+    'ʔ':  [0,1,0,0,0,0,0,0,0,0,0,0,0,0],  # glottal stop
+    'ˈ':  [0,0,0,0,0,0,0,0,0,0,0,0,0,0],  # primary stress
+    'ˌ':  [0,0,0,0,0,0,0,0,0,0,0,0,0,0],  # secondary stress
 }
 
 def phone_to_bits(phone: str) -> np.ndarray:
     """
-    Returns the 12-d feature vector for the phone,
+    Returns the 14-d feature vector for the phone,
     or a default zero vector if not present.
     """
-    return np.array(phone_feature_map.get(phone, [0]*12), dtype=float)
+    return np.array(phone_feature_map.get(phone, [0]*14), dtype=float)
 
 def bits_to_phone(bits: np.ndarray) -> str:
     """
@@ -227,122 +248,113 @@ def feature_sequence_to_ipa(features: list[np.ndarray]) -> str:
     phones = [bits_to_phone(feat) for feat in features]
     return '/' + ''.join(p for p in phones if p is not None) + '/'
 
+def predict_feature_change(feature_vector: np.ndarray, time_delta: float) -> np.ndarray:
+    """
+    Predicts how features change over time based on common sound change patterns
+    """
+    # Extract key features
+    syllabic = feature_vector[0]
+    consonantal = feature_vector[1]
+    high = feature_vector[9]
+    back = feature_vector[10]
+    low = feature_vector[11]
+    tense = feature_vector[13]
+    
+    # Scale time_delta to [0,1] range for interpolation
+    alpha = min(1.0, abs(time_delta) / 2000)
+    alpha = pow(alpha, 0.3)  # Non-linear change rate
+    
+    new_features = feature_vector.copy()
+    
+    if syllabic == 1:  # Vowel changes
+        if time_delta > 0:  # Future changes
+            # Chain shift patterns
+            if high == 1 and tense == 1:  # High tense vowels tend to diphthongize
+                new_features[9] -= 0.3 * alpha  # Lower height
+                new_features[13] -= 0.2 * alpha  # Reduce tenseness
+            elif high == 0 and low == 0:  # Mid vowels tend to raise
+                new_features[9] += 0.2 * alpha  # Raise height
+            elif low == 1:  # Low vowels tend to raise
+                new_features[11] -= 0.3 * alpha  # Reduce lowness
+                new_features[9] += 0.2 * alpha  # Increase height
+        else:  # Historical changes
+            # Reverse chain shifts
+            if not back:  # Front vowels
+                new_features[10] += 0.1 * alpha  # Slight backing
+            if tense:
+                new_features[13] -= 0.1 * alpha  # Reduce tenseness
+    
+    else:  # Consonant changes
+        if time_delta > 0:
+            # Lenition patterns
+            if consonantal == 1:
+                new_features[2] += 0.2 * alpha  # Increase sonority
+                new_features[3] += 0.3 * alpha  # Increase continuancy
+        else:
+            # Fortition patterns
+            if feature_vector[3] == 1:  # Continuants
+                new_features[3] -= 0.2 * alpha  # Reduce continuancy
+    
+    return new_features
+
 def interpolate_features(neighbors_df: pd.DataFrame, target_time: float) -> str:
     """
-    Interpolates between attested IPA forms with dramatic future changes.
+    Interpolates between attested IPA forms using feature-based transformations.
+    Only used for future predictions.
     """
+    # Only process future predictions
+    if target_time <= 0:
+        return None
+        
     time_ordered = neighbors_df.sort_values('time_period')
     
-    # Prioritize actual word matches
-    word_matches = time_ordered[time_ordered['word'] == 'sheep']
-    if not word_matches.empty:
-        time_ordered = word_matches
-
-    # For future predictions (beyond our data)
-    max_time = time_ordered['time_period'].max()
-    if target_time > max_time:
-        # Get most recent form as base
-        base_ipa = re.sub(r'[/\[\]]', '', time_ordered.iloc[-1]['phonetic_representation'])
-        
-        # Calculate how far into the future we are
-        time_diff = target_time - max_time
-        alpha = min(1.0, time_diff / 2000)  # Faster changes (2000 years instead of 5000)
-        alpha = pow(alpha, 0.3)  # More dramatic early changes
-        
-        # Future sound changes based on common linguistic patterns
-        result = ""
-        for i, char in enumerate(base_ipa):
-            if char == 'i':
-                # Vowel chain shift: i → ɪ → e → ɛ
-                if alpha < 0.25:
-                    result += 'i'
-                elif alpha < 0.5:
-                    result += 'ɪ'
-                elif alpha < 0.75:
-                    result += 'e'
-                else:
-                    result += 'ɛ'
-            elif char == 'ʃ':
-                # Palatalization weakening: ʃ → sʲ → s
-                if alpha < 0.3:
-                    result += 'ʃ'
-                elif alpha < 0.6:
-                    result += 'sʲ'
-                else:
-                    result += 's'
-            elif char == 'p':
-                # Final consonant weakening: p → ɸ → f → h → ∅
-                if i == len(base_ipa) - 1:  # Only if word-final
-                    if alpha < 0.2:
-                        result += 'p'
-                    elif alpha < 0.4:
-                        result += 'ɸ'
-                    elif alpha < 0.6:
-                        result += 'f'
-                    elif alpha < 0.8:
-                        result += 'h'
-                    else:
-                        result += ''
-                else:
-                    result += char
-            elif char == 'ˈ':
-                # Keep stress mark
-                result += 'ˈ'
-            else:
-                result += char
-        
-        # Add new sounds in future forms
-        if alpha > 0.7:
-            # Add vowel harmony
-            if 'ɛ' in result:
-                result = result.replace('a', 'ɛ')
-            # Add tones for additional contrast
-            if 'ˈ' in result:
-                result = result.replace('ˈ', 'ˈ˦')
-        
-        return f"/{result}/"
+    # Get most recent attested form as base
+    base_ipa = time_ordered.iloc[-1]['phonetic_representation']
+    time_delta = target_time - time_ordered.iloc[-1]['time_period']
     
-    # Past/present prediction logic remains the same
-    before = time_ordered[time_ordered['time_period'] <= target_time]
-    after = time_ordered[time_ordered['time_period'] > target_time]
-
-    if before.empty:
-        return after.iloc[0]['phonetic_representation']
-    if after.empty:
-        return before.iloc[-1]['phonetic_representation']
-
-    # Regular interpolation logic...
-    t1 = before.iloc[-1]['time_period']
-    t2 = after.iloc[0]['time_period']
-    ipa1 = re.sub(r'[/\[\]]', '', before.iloc[-1]['phonetic_representation'])
-    ipa2 = re.sub(r'[/\[\]]', '', after.iloc[0]['phonetic_representation'])
-
-    alpha = (target_time - t1) / (t2 - t1)
-    alpha = pow(alpha, 0.3)
-
-    result = ""
-    for i in range(max(len(ipa1), len(ipa2))):
-        if i >= len(ipa1):
-            result += ipa2[i]
-        elif i >= len(ipa2):
-            result += ipa1[i]
-        else:
-            if ipa1[i] == 'ɒ' and ipa2[i] == 'ɔ':
-                result += 'ɔ' if alpha > 0.3 else 'ɒ'
-            elif ipa1[i] == 'ˈ' or ipa2[i] == 'ˈ':
-                result += 'ˈ'
-            else:
-                result += ipa2[i] if alpha > 0.4 else ipa1[i]
-
-    return f"/{result}/"
+    # Handle future extrapolation
+    base_features = ipa_to_feature_sequence(base_ipa)
+    predicted_features = [predict_feature_change(f, time_delta) for f in base_features]
+    return feature_sequence_to_ipa(predicted_features)
 
 def predict_ipa_for_time(time_input: float, neighbors_df: pd.DataFrame) -> str:
     """
-    Predicts IPA for a given time, focusing on subtle changes between attested forms.
+    Predicts IPA for a given time. 
+    - For past: uses nearest attested form if available, otherwise uses ML
+    - For future: always uses feature-based prediction
     """
     if len(neighbors_df) == 0:
         return None
 
+    time_ordered = neighbors_df.sort_values('time_period')
+    
+    # For historical times
+    if time_input < 0:
+        # Find closest match within a reasonable time window (±500 years)
+        time_window = 500
+        close_matches = time_ordered[
+            (time_ordered['time_period'] >= time_input - time_window) & 
+            (time_ordered['time_period'] <= time_input + time_window)
+        ]
+        
+        if not close_matches.empty:
+            # Use closest historical match if we have one in range
+            closest_idx = (close_matches['time_period'] - time_input).abs().idxmin()
+            return close_matches.loc[closest_idx]['phonetic_representation']
+        else:
+            # No close historical match, use ML prediction
+            # Use the closest attested form as base
+            base_idx = (time_ordered['time_period'] - time_input).abs().idxmin()
+            base_ipa = time_ordered.loc[base_idx]['phonetic_representation']
+            base_time = time_ordered.loc[base_idx]['time_period']
+            
+            # Convert to features and predict changes
+            features = ipa_to_feature_sequence(base_ipa)
+            time_delta = time_input - base_time
+            predicted_features = [predict_feature_change(f, time_delta) for f in features]
+            return feature_sequence_to_ipa(predicted_features)
+    
+    # For future predictions, always use feature-based interpolation
     predicted_ipa = interpolate_features(neighbors_df, time_input)
     return predicted_ipa
 

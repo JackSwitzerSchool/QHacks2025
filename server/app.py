@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, Blueprint
 from services.predictor import PredictionService, PredictionError, initialize_global_data
 from services.polly_service import PollyService
+from forecast.prediction import predict_ipa_for_time, find_nearest_vectors
 import logging
 
 app = Flask(__name__)
@@ -16,7 +17,7 @@ def initialize():
     global prediction_service, polly_service
     if prediction_service is None:
         # Initialize data once
-        initialize_global_data()
+        initialize_global_data()  # This now loads the ML models too
         prediction_service = PredictionService()
         polly_service = PollyService()
 
@@ -48,23 +49,25 @@ def predict():
         if not language or not user_input:
             return jsonify({"error": "Missing required fields"}), 400
             
-        # Get prediction with enhanced metadata
-        result = get_predictor().predict(language, user_input)
+        # Get prediction with enhanced ML-based features
+        result = prediction_service.predict(language, user_input)
         
-        # Generate audio based on language
+        # Generate audio based on language and predicted IPA
         if language == "toronto_english":
-            # Use a specific voice/style for Toronto slang
-            audio_data = get_polly().synthesize_direct(
+            # Use Toronto-specific voice settings
+            audio_data = polly_service.synthesize_direct(
                 result["predicted_text"], 
                 "toronto_english"
             )
         elif language in ["us_english", "british_english"]:
-            audio_data = get_polly().synthesize_direct(
+            # Direct synthesis for modern English
+            audio_data = polly_service.synthesize_direct(
                 result["predicted_text"], 
                 language
             )
         else:
-            audio_data = get_polly().synthesize_ipa(result["predicted_text"])
+            # Use IPA synthesis for historical/future predictions
+            audio_data = polly_service.synthesize_ipa(result["predicted_text"])
             
         if audio_data:
             result["audio"] = audio_data
@@ -72,8 +75,10 @@ def predict():
         return jsonify(result)
         
     except PredictionError as e:
+        logger.error(f"Prediction error: {str(e)}")
         return jsonify({"error": str(e)}), 500
     except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 # Register blueprint

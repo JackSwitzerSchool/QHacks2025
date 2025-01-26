@@ -2,10 +2,16 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from forecast.prediction import *
+from forecast.prediction import (
+    load_dataset, parse_vectors_from_df, initialize_model, 
+    find_nearest_vectors, predict_ipa_for_time, predict_feature_change,
+    interpolate_features, phone_feature_map, phone_to_bits, bits_to_phone,
+    ipa_to_feature_sequence, feature_sequence_to_ipa
+)
 from typing import Dict, Any
 import logging
 from services.claude_service import ClaudeService
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +22,10 @@ _GLOBAL_DATA = {
     'model': None,
     'device': None
 }
+
+# Update FILE_PATH constant at the top
+FILE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                        "datapipeline/data/output/projected_vectors_with_metadata.csv")
 
 def initialize_global_data():
     """Initialize data and models once at module level"""
@@ -125,14 +135,16 @@ class PredictionService:
                 }
                 return response
 
-            # For historical/future predictions, use existing logic
+            # For historical/future predictions
             words = text.split()
             word_predictions = []
             total_confidence = 0
             all_matches = []
             
+            target_time = self.LANGUAGE_TIME_MAP[language]
+            
             for word in words:
-                # Find nearest neighbors using BERT embeddings
+                # Get nearest neighbors
                 neighbors_df, distances = find_nearest_vectors(
                     query=word,
                     df=self.df,
@@ -142,13 +154,42 @@ class PredictionService:
                     top_n=10
                 )
                 
-                # Predict IPA for the target time period
-                predicted_ipa = predict_ipa_for_time(self.LANGUAGE_TIME_MAP[language], neighbors_df)
-                
-                # Apply any time-specific phonological rules
-                final_ipa = apply_phonological_rules(predicted_ipa, self.LANGUAGE_TIME_MAP[language])
-                
-                # Store prediction and confidence
+                # Use appropriate prediction method based on time
+                if target_time <= 0:  # Past/present
+                    time_ordered = neighbors_df.sort_values('time_period')
+                    # Find closest match within time window
+                    time_window = 500
+                    close_matches = time_ordered[
+                        (time_ordered['time_period'] >= target_time - time_window) & 
+                        (time_ordered['time_period'] <= target_time + time_window)
+                    ]
+                    
+                    if not close_matches.empty:
+                        # Use closest historical match if we have one in range
+                        closest_idx = (close_matches['time_period'] - target_time).abs().idxmin()
+                        final_ipa = close_matches.loc[closest_idx]['phonetic_representation']
+                    else:
+                        # No close historical match, use ML prediction
+                        base_ipa = predict_ipa_for_time(target_time, neighbors_df)
+                        if base_ipa:
+                            features = ipa_to_feature_sequence(base_ipa)
+                            time_delta = target_time - neighbors_df.iloc[0]['time_period']
+                            predicted_features = [predict_feature_change(f, time_delta) for f in features]
+                            final_ipa = feature_sequence_to_ipa(predicted_features)
+                        else:
+                            final_ipa = "/???/"
+                else:  # Future
+                    # Use feature-based prediction
+                    base_ipa = predict_ipa_for_time(target_time, neighbors_df)
+                    if base_ipa:
+                        features = ipa_to_feature_sequence(base_ipa)
+                        time_delta = target_time - neighbors_df.iloc[0]['time_period']
+                        predicted_features = [predict_feature_change(f, time_delta) for f in features]
+                        final_ipa = feature_sequence_to_ipa(predicted_features)
+                    else:
+                        final_ipa = "/???/"
+
+                # Calculate confidence and store prediction
                 word_confidence = float(1.0 - min(distances) if len(distances) > 0 else 0.0)
                 word_predictions.append({
                     'original': word,
@@ -157,7 +198,7 @@ class PredictionService:
                 })
                 total_confidence += word_confidence
                 
-                # Store nearest matches for this word
+                # Store matches (keep existing match storage code)
                 all_matches.extend([
                     {
                         "word": row.get('word', 'N/A'),
@@ -167,24 +208,22 @@ class PredictionService:
                         "original_word": word
                     }
                     for i, (_, row) in enumerate(neighbors_df.iterrows())
-                ][:3])  # Keep top 3 matches per word
-            
-            # Combine predictions into sentence
+                ][:3])
+
+            # Assemble final response (keep existing response assembly)
             final_ipa_sentence = ' '.join(wp['ipa'] for wp in word_predictions)
             avg_confidence = total_confidence / len(words) if words else 0
             
-            # Sort all matches by distance and keep top 5 overall
             all_matches.sort(key=lambda x: x['distance'])
             top_matches = all_matches[:5]
             
-            # Prepare response
             response = {
                 "predicted_text": final_ipa_sentence,
                 "time_period": self.LANGUAGE_TIME_MAP[language],
                 "language": language,
                 "original_text": text,
                 "confidence_score": float(avg_confidence),
-                "word_predictions": word_predictions,  # Individual word predictions
+                "word_predictions": word_predictions,
                 "nearest_matches": top_matches
             }
             
@@ -196,4 +235,10 @@ class PredictionService:
             raise PredictionError(f"Prediction failed: {str(e)}")
 
 class PredictionError(Exception):
-    pass 
+    pass
+
+def phone_to_bits(phone: str) -> np.ndarray:
+    """Convert phone symbol to its 14D feature vector."""
+    if phone in phone_feature_map:
+        return np.array(phone_feature_map[phone], dtype=float)
+    return np.zeros(14, dtype=float)  # Changed from 12 to 14 dimensions 
