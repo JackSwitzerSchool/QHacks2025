@@ -12,6 +12,8 @@ from datetime import datetime
 import signal
 import psutil
 from pathlib import Path
+from torch.cuda.amp import autocast
+import faiss
 
 # -----------------------------------------------------------------------------
 # 1. SET UP LOGGING
@@ -74,33 +76,54 @@ def generate_vectors_in_batches(
     texts: list[str], 
     tokenizer, 
     model, 
-    batch_size: int = 32
+    batch_size: int = 512
 ) -> np.ndarray:
     """
     Generates embeddings for a list of texts in batches using the provided tokenizer and model.
-    Returns a numpy array of shape (num_texts, hidden_dim).
+    Optimized for GPU performance.
     """
     logger.info("Generating vectors in batches of size %d...", batch_size)
     all_vectors = []
-
-    for i in range(0, len(texts), batch_size):
-        batch_texts = texts[i : i + batch_size]
-        inputs = tokenizer(
-            batch_texts, 
-            return_tensors="pt", 
-            padding=True, 
-            truncation=True
-        )
-        
-        with torch.no_grad():
-            outputs = model(**inputs)
-        
-        # CLS token embeddings for each sentence in the batch
-        cls_vectors = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-        all_vectors.append(cls_vectors)
-
-        logger.debug("Processed batch %d/%d", (i // batch_size) + 1, 
-                     (len(texts) + batch_size - 1) // batch_size)
+    
+    # Setup device and model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device).half()  # Move to GPU and convert to fp16
+    logger.info(f"Using device: {device}")
+    
+    # Calculate total number of batches for progress bar
+    total_batches = (len(texts) + batch_size - 1) // batch_size
+    
+    # Create progress bar
+    with tqdm(total=len(texts), desc="Generating vectors", unit="texts") as pbar:
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i : i + batch_size]
+            
+            # Move inputs to GPU
+            inputs = tokenizer(
+                batch_texts, 
+                return_tensors="pt", 
+                padding=True, 
+                truncation=True,
+                max_length=512
+            )
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            # Generate embeddings with mixed precision
+            with torch.no_grad(), torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+                outputs = model(**inputs)
+                cls_vectors = outputs.last_hidden_state[:, 0, :].cpu().numpy()
+                all_vectors.append(cls_vectors)
+            
+            # Update progress bar
+            pbar.update(len(batch_texts))
+            pbar.set_postfix({
+                'Batch': f"{(i//batch_size)+1}/{total_batches}",
+                'GPU Mem': f"{torch.cuda.memory_allocated()/1e9:.1f}GB"
+            })
+            
+            # Optional: Clear GPU cache periodically
+            if i % (batch_size * 10) == 0:
+                torch.cuda.empty_cache()
     
     # Concatenate all batch results into a single array
     all_vectors = np.concatenate(all_vectors, axis=0)
@@ -111,61 +134,64 @@ def generate_vectors_in_batches(
 # 6. VECTOR STORAGE / PARSING
 # -----------------------------------------------------------------------------
 def store_vectors_in_df(df: pd.DataFrame, vectors: np.ndarray) -> pd.DataFrame:
-    """
-    Stores a matrix of vectors into the 'vector' column of the dataframe as strings.
-    """
-    logger.info("Storing vectors in the DataFrame...")
-    # Ensure vector dimension matches df length
-    if len(vectors) != len(df):
-        logger.error("Mismatch between number of vectors (%d) and DataFrame rows (%d).", 
-                     len(vectors), len(df))
-        raise ValueError("Number of vectors does not match the DataFrame rows.")
-
-    df["vector"] = [np.array2string(v, separator=",") for v in vectors]
-    logger.info("Vectors stored as strings in 'vector' column.")
+    """Store vectors directly in DataFrame as strings"""
+    logger.info("Storing vectors in DataFrame...")
+    
+    # Convert vectors to strings with fixed precision to save space
+    df["vector"] = [np.array2string(v, separator=',', precision=8, suppress_small=True) for v in vectors]
+    
+    logger.info("Vectors stored in DataFrame")
     return df
 
-def parse_vectors_from_df(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Parses the string-encoded vectors in 'vector' column to numpy arrays.
-    """
-    logger.info("Parsing existing 'vector' column to numpy arrays...")
-    
-    def _parse_vector(vec_str: str):
-        # Removes the brackets [ and ] before parsing
-        return np.fromstring(vec_str.strip()[1:-1], sep=",")
+def load_vectors(vector_file: str) -> np.ndarray:
+    """Load vectors efficiently from npz file"""
+    logger.info(f"Loading vectors from {vector_file}")
+    return np.load(vector_file)["vectors"]
 
-    df["vector"] = df["vector"].apply(_parse_vector)
-    logger.info("Vector parsing complete.")
+def parse_vectors_from_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Parse vectors using parallel processing"""
+    logger.info("Parsing vectors in parallel...")
+    
+    def parse_vector(vec_str: str):
+        return np.fromstring(vec_str.strip()[1:-1], sep=",")
+    
+    with ThreadPoolExecutor() as executor:
+        df["vector"] = list(executor.map(parse_vector, df["vector"]))
+    
     return df
 
 # -----------------------------------------------------------------------------
 # 7. NEAREST VECTOR SEARCH
 # -----------------------------------------------------------------------------
 def find_nearest_vectors(query: str, df: pd.DataFrame, tokenizer, model, top_n: int = 5):
-    """
-    Given a query string, computes the embedding using the same tokenizer/model pipeline,
-    compares it to all stored embeddings in df['vector'], and returns top_n matches.
-    """
+    """Find nearest vectors using cosine similarity"""
     logger.info("Generating embedding for query: '%s'", query)
+    
+    # Move model to GPU if not already there
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    
+    # Generate query embedding
     inputs = tokenizer(query, return_tensors="pt", padding=True, truncation=True)
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    
     with torch.no_grad():
         outputs = model(**inputs)
-    query_vector = outputs.last_hidden_state[:, 0, :].squeeze().cpu().numpy()
+        query_vector = outputs.last_hidden_state[:, 0, :].cpu().numpy().squeeze()
 
-    logger.info("Computing cosine distances for the query embedding...")
-    stored_vectors = np.stack(df["vector"].values)  # shape: (num_rows, hidden_dim)
+    # Parse stored vectors
+    logger.info("Parsing stored vectors...")
+    stored_vectors = np.stack([
+        np.fromstring(vec_str.strip()[1:-1], sep=",") 
+        for vec_str in df["vector"].values
+    ])
 
-    # Using cosine distance => smaller distance = more similar
+    # Compute distances
+    logger.info("Computing cosine distances...")
     distances = cdist([query_vector], stored_vectors, metric="cosine").flatten()
     
-    # Get the indices of the top_n nearest vectors
     nearest_indices = np.argsort(distances)[:top_n]
-    nearest_results = df.iloc[nearest_indices]
-    nearest_distances = distances[nearest_indices]
-
-    logger.info("Found top %d nearest vectors.", top_n)
-    return nearest_results, nearest_distances
+    return df.iloc[nearest_indices], distances[nearest_indices]
 
 def query_word_context(query_word: str, df: pd.DataFrame, tokenizer, model, top_n: int = 5):
     """
@@ -200,33 +226,39 @@ if __name__ == "__main__":
     # Step 1: Load dataset
     df = load_dataset(FILE_PATH)
 
-    # Step 2: Check if 'vector' column exists; if not, generate vectors in batches
+    # Step 2: Check if vectors exist
     if "vector" not in df.columns:
-        logger.info("No 'vector' column found. Generating vectors...")
+        logger.info("No vectors found. Generating vectors...")
 
         # Initialize model/tokenizer
         tokenizer, model = initialize_model("answerdotai/ModernBERT-base")
 
-        # Generate vectors for the 'english_translation' column
+        # Generate vectors
         texts = df["english_translation"].astype(str).tolist()
-        vectors = generate_vectors_in_batches(texts, tokenizer, model, batch_size=64)
+        vectors = generate_vectors_in_batches(texts, tokenizer, model, batch_size=512)
 
         # Store vectors in DataFrame
         df = store_vectors_in_df(df, vectors)
 
-        # Save the updated DataFrame
+        # Save the DataFrame
         logger.info("Saving dataset with vectors to %s", OUTPUT_FILE)
         df.to_csv(OUTPUT_FILE, index=False)
-    else:
-        logger.info("Parsing existing 'vector' column...")
-        df = parse_vectors_from_df(df)
-        # Initialize model/tokenizer for querying
-        tokenizer, model = initialize_model("answerdotai/ModernBERT-base")
 
-    # Example query
-    query_word = "believe"
-    top_n = 5
-    results = query_word_context(query_word, df, tokenizer, model, top_n)
+    # Example queries
+    test_queries = ["believe", "trust", "faith"]
+    for query in test_queries:
+        logger.info(f"\nQuerying for: {query}")
+        results, distances = find_nearest_vectors(query, df, tokenizer, model, top_n=5)
+        
+        print(f"\nNearest matches for '{query}':")
+        for i, (_, row) in enumerate(results.iterrows()):
+            print(f"\nRank {i+1}:")
+            print(f"Word: {row.get('word', 'N/A')}")
+            print(f"English Translation: {row.get('english_translation', 'N/A')}")
+            print(f"Language: {row.get('language', 'N/A')}")
+            print(f"IPA: {row.get('phonetic_representation', 'N/A')}")
+            print(f"Time Period: {row.get('time_period', 'N/A')}")
+            print(f"Distance: {distances[i]:.4f}")
 
 class ModernBERTProcessor:
     def __init__(self, model_name: str = "answerdotai/ModernBERT-base", 
@@ -255,6 +287,12 @@ class ModernBERTProcessor:
         self.start_time = None
         self.last_checkpoint = 0
         self.checkpoint_interval = 1000
+        
+        # Enable mixed precision
+        self.model.half()  # Convert model to fp16
+        logger.info("Enabled mixed precision (fp16)")
+
+        self.index = None
 
     def handle_interrupt(self, signum, frame):
         """Handle interrupt signal gracefully"""
@@ -281,8 +319,8 @@ class ModernBERTProcessor:
             logger.error(f"Error generating embedding for text '{text[:50]}...': {str(e)}")
             raise
 
-    def process_batch(self, texts: list, batch_size: int = 32) -> list:
-        """Process a batch of texts and return their embeddings"""
+    def process_batch(self, texts: list, batch_size: int = 512) -> list:
+        """Process a batch of texts with mixed precision"""
         embeddings = []
         
         for i in range(0, len(texts), batch_size):
@@ -293,58 +331,56 @@ class ModernBERTProcessor:
             inputs = self.tokenizer(batch_texts, return_tensors="pt", padding=True, truncation=True)
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
-            with torch.no_grad():
+            # Use autocast for mixed precision
+            with torch.no_grad(), torch.amp.autocast():
                 outputs = self.model(**inputs)
                 batch_embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
                 embeddings.extend(batch_embeddings)
                 
         return embeddings
 
-    def process_dataset(self, df: pd.DataFrame, batch_size: int = 32) -> pd.DataFrame:
-        """Process entire dataset with progress tracking and checkpointing"""
-        self.start_time = time.time()
+    def process_dataset(self, df: pd.DataFrame, batch_size: int = 512) -> pd.DataFrame:
+        """Process dataset with optimized preprocessing"""
+        # Preprocess all texts at once
         texts = df["english_translation"].astype(str).tolist()
-        total_texts = len(texts)
-        processed_data = []
         
-        logger.info(f"Processing {total_texts} texts in batches of {batch_size}")
+        # Pre-tokenize all texts
+        logger.info("Pre-tokenizing texts...")
+        tokenized = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=512
+        )
         
-        with tqdm(total=total_texts, desc="Processing texts") as pbar:
-            for i in range(0, total_texts, batch_size):
+        # Process in batches
+        all_embeddings = []
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        
+        with tqdm(total=len(texts), desc="Processing", unit="texts") as pbar:
+            for i in range(0, len(texts), batch_size):
                 if self.interrupted:
                     break
                     
-                batch_texts = texts[i:i + batch_size]
-                try:
-                    batch_embeddings = self.process_batch(batch_texts, batch_size)
-                    processed_data.extend(batch_embeddings)
-                    
-                    # Update progress
-                    current_count = len(processed_data)
-                    pbar.update(len(batch_embeddings))
-                    
-                    # Calculate statistics
-                    elapsed_time = time.time() - self.start_time
-                    texts_per_second = current_count / elapsed_time if elapsed_time > 0 else 0
-                    memory_usage = self.get_memory_usage()
-                    
-                    pbar.set_postfix({
-                        'Texts/s': f"{texts_per_second:.2f}",
-                        'Memory': f"{memory_usage:.1f}GB"
-                    })
-                    
-                    # Save checkpoint if needed
-                    if current_count - self.last_checkpoint >= self.checkpoint_interval:
-                        self.save_checkpoint(processed_data, df.iloc[:len(processed_data)])
-                        self.last_checkpoint = current_count
-                        
-                except Exception as e:
-                    logger.error(f"Error processing batch at index {i}: {str(e)}")
-                    self.error_count += len(batch_texts)
-                    continue
+                batch_dict = {
+                    k: v[i:i + batch_size].to(self.device) 
+                    for k, v in tokenized.items()
+                }
+                
+                with torch.no_grad(), autocast():
+                    outputs = self.model(**batch_dict)
+                    embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
+                    all_embeddings.append(embeddings)
+                
+                pbar.update(len(embeddings))
+                pbar.set_postfix({
+                    'Batch': f"{(i//batch_size)+1}/{total_batches}",
+                    'Memory': f"{self.get_memory_usage():.1f}GB"
+                })
         
-        # Store vectors in DataFrame
-        df['vector'] = [np.array2string(v, separator=",") for v in processed_data]
+        vectors = np.concatenate(all_embeddings)
+        df['vector'] = [np.array2string(v, separator=",") for v in vectors]
         
         return df
 
@@ -358,21 +394,41 @@ class ModernBERTProcessor:
         
         logger.info(f"Checkpoint saved: {checkpoint_path}")
 
+    def build_search_index(self, vectors: np.ndarray):
+        """Build FAISS index for fast similarity search"""
+        logger.info("Building FAISS index for fast search...")
+        dimension = vectors.shape[1]
+        
+        # Normalize vectors for cosine similarity
+        faiss.normalize_L2(vectors)  # In-place L2 normalization
+        
+        # Use IndexFlatL2 with normalized vectors (equivalent to cosine similarity)
+        self.index = faiss.IndexFlatL2(dimension)
+        self.index.add(vectors.astype('float32'))
+    
     def find_nearest_vectors(self, query: str, df: pd.DataFrame, top_n: int = 5):
-        """Find nearest vectors to query (maintaining original functionality)"""
+        """Find nearest vectors using FAISS"""
         query_embedding = self.generate_embedding(query)
         
-        # Parse stored vectors
-        stored_vectors = np.stack([
-            np.fromstring(vec_str.strip()[1:-1], sep=",") 
-            for vec_str in df["vector"].values
-        ])
+        # Build index if not exists
+        if self.index is None:
+            stored_vectors = np.stack([
+                np.fromstring(vec_str.strip()[1:-1], sep=",") 
+                for vec_str in df["vector"].values
+            ])
+            self.build_search_index(stored_vectors)
         
-        # Compute distances
-        distances = cdist([query_embedding], stored_vectors, metric="cosine").flatten()
-        nearest_indices = np.argsort(distances)[:top_n]
+        # Normalize query vector
+        query_embedding = query_embedding.reshape(1, -1).astype('float32')
+        faiss.normalize_L2(query_embedding)
         
-        return df.iloc[nearest_indices], distances[nearest_indices]
+        # Search using FAISS
+        distances, indices = self.index.search(query_embedding, top_n)
+        
+        # Convert L2 distances to similarities (smaller distance = more similar)
+        similarities = 1 - distances/2  # Convert L2 distance to cosine similarity
+        
+        return df.iloc[indices[0]], similarities[0]
 
 # Example usage
 if __name__ == "__main__":
@@ -383,7 +439,7 @@ if __name__ == "__main__":
     
     # Process dataset if vectors don't exist
     if "vector" not in df.columns:
-        df = processor.process_dataset(df, batch_size=64)
+        df = processor.process_dataset(df, batch_size=512)
         df.to_csv(OUTPUT_FILE, index=False)
     
     # Example query
@@ -399,5 +455,5 @@ if __name__ == "__main__":
         print(f"Language: {row.get('language', 'N/A')}")
         print(f"IPA: {row.get('phonetic_representation', 'N/A')}")
         print(f"Time Period: {row.get('time_period', 'N/A')}")
-        print(f"Distance: {distances[i]}")
+        print(f"Distance: {distances}")
 
