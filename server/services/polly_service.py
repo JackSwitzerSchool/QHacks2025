@@ -11,6 +11,7 @@ class PollyService:
     VOICE_MAP = {
         "us_english": "Matthew",  # American English male voice
         "british_english": "Amy",  # British English female voice
+        "toronto_english": "Stephen",  # We'll use Stephen with custom SSML for Toronto
     }
 
     def __init__(self):
@@ -53,10 +54,27 @@ class PollyService:
         """Directly synthesize text using appropriate Polly voice"""
         try:
             voice_id = self.VOICE_MAP.get(language, 'Joanna')
+            
+            # Add Toronto-specific SSML modifications if needed
+            if language == "toronto_english":
+                # Neural-compatible SSML following AWS documentation
+                ssml_text = f'''
+                <speak>
+                    <prosody rate="fast" pitch="high">
+                        {text}
+                    </prosody>
+                </speak>
+                '''
+                text_type = 'ssml'
+            else:
+                ssml_text = text
+                text_type = 'text'
+            
             response = self.polly.synthesize_speech(
-                Text=text,
-                TextType='text',
+                Text=ssml_text,
+                TextType=text_type,
                 VoiceId=voice_id,
+                Engine='neural',
                 OutputFormat='mp3',
                 SampleRate='22050'
             )

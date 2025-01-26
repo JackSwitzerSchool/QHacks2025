@@ -347,3 +347,20 @@ button:active {
 .play-audio:hover {
     background-color: #78206E;
 }
+
+.sentence-toronto {
+    font-size: 1.2rem;
+    margin: 0.5rem 0;
+    color: #215E99;
+    font-weight: bold;
+}
+
+.toronto-explanation {
+    font-style: italic;
+    color: #666;
+    margin: 0.5rem 0;
+    padding: 0.5rem;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}

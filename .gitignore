@@ -3,4 +3,5 @@
 /.venv/
 /.vscode/
 /datapipeline/data/
-datapipeline/__pycache__/
+/datapipeline/__pycache__/
+!/datapipeline/data/TorontoSlangList.md

@@ -22,7 +22,7 @@
                     <option value="british_english">British English</option>
                     <option value="future_english_1000">Future English + 1000 years</option>
                     <option value="future_english_2000">Future English + 2000 years</option>
-                    <option value="future_toronto">Future Toronto Slang</option>
+                    <option value="toronto_english">Toronto English</option>
                 </select>
 
                 <label for="user-input">Speak or Type:</label>
@@ -51,7 +51,9 @@
                 <div class="sentence-prediction">
                     <h3>Full Sentence:</h3>
                     <div class="sentence-original"></div>
+                    <div class="sentence-toronto"></div>
                     <div class="sentence-ipa"></div>
+                    <div class="toronto-explanation"></div>
                     <div class="audio-controls">
                         <button class="play-audio" style="display: none;">Play Pronunciation</button>
                         <audio id="pronunciation-audio" style="display: none;"></audio>
@@ -107,7 +109,9 @@
             $(".confidence-bar").css("width", "0%");
             $(".confidence-text").text("");
             $(".sentence-original").text("");
+            $(".sentence-toronto").text("");
             $(".sentence-ipa").text("");
+            $(".toronto-explanation").text("");
             $(".word-predictions-list").empty();
             $(".timeline-entries").empty();
             $(".play-audio").hide();
@@ -140,13 +144,23 @@
                     // Update sentence-level prediction
                     $(".sentence-original").text(`Original: ${response.original_text}`);
                     
-                    // Show/hide IPA and historical elements based on language type
-                    if (response.is_modern) {
+                    // Show/hide elements based on language type
+                    if (response.is_toronto) {
+                        $(".sentence-toronto").show().text(`Toronto Style: ${response.predicted_text}`);
+                        $(".sentence-ipa").show().text(`IPA: ${response.ipa_text}`);
+                        $(".toronto-explanation").show().text(response.explanation);
+                        $(".word-predictions").hide();
+                        $(".timeline-translations").hide();
+                    } else if (response.is_modern) {
+                        $(".sentence-toronto").hide();
                         $(".sentence-ipa").hide();
+                        $(".toronto-explanation").hide();
                         $(".word-predictions").hide();
                         $(".timeline-translations").hide();
                     } else {
+                        $(".sentence-toronto").hide();
                         $(".sentence-ipa").show().text(`IPA: ${response.predicted_text}`);
+                        $(".toronto-explanation").hide();
                         
                         // Update word-by-word breakdown
                         const wordList = $(".word-predictions-list");

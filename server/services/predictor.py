@@ -5,6 +5,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from forecast.prediction import *
 from typing import Dict, Any
 import logging
+from services.claude_service import ClaudeService
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class PredictionService:
         "british_english": -300,  # Present day
         "future_english_1000": 1000,  # 1000 years in future
         "future_english_2000": 2000,  # 2000 years in future
-        "future_toronto": 100,  # Far future Toronto variant
+        "toronto_english": 0,  # Toronto variant
     }
 
     def __init__(self):
@@ -52,6 +53,7 @@ class PredictionService:
         self.tokenizer = _GLOBAL_DATA['tokenizer']
         self.model = _GLOBAL_DATA['model']
         self.device = _GLOBAL_DATA['device']
+        self.claude_service = ClaudeService()
         logger.info("PredictionService initialized using global data")
 
     def predict(self, language: str, text: str) -> Dict[str, Any]:
@@ -75,6 +77,35 @@ class PredictionService:
             text = text.strip().lower()
             if not text:
                 raise PredictionError("Empty input text")
+
+            # Handle Toronto slang separately
+            if language == "toronto_english":
+                translation = self.claude_service.translate_to_toronto_slang(text)
+                if translation is None:
+                    raise PredictionError("Toronto translation failed")
+                
+                # Extract both text versions
+                toronto_text = translation["toronto_text"]
+                ipa_text = translation["ipa_text"]
+                
+                response = {
+                    "predicted_text": toronto_text,  # Use Toronto slang for speech
+                    "ipa_text": ipa_text,  # Store IPA separately
+                    "time_period": self.LANGUAGE_TIME_MAP[language],
+                    "language": language,
+                    "original_text": text,
+                    "confidence_score": 1.0,
+                    "is_modern": True,
+                    "is_toronto": True,
+                    "explanation": toronto_text.split("\n")[0],  # First line contains explanation
+                    "word_predictions": [{
+                        'original': word,
+                        'toronto': word,
+                        'confidence': 1.0
+                    } for word in toronto_text.split()],
+                    "nearest_matches": []
+                }
+                return response
 
             # For modern English variants, use direct text-to-speech
             if language in ["us_english", "british_english"]:
