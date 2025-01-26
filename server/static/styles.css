@@ -49,12 +49,29 @@ select, textarea {
     font-size: 1rem;
     font-family: 'Courier New', sans-serif;
     transition: border-color 0.3s;
+    min-height: 100px;
+    resize: vertical;
+    max-height: 400px;
 }
 
 select:focus, textarea:focus {
     border-color: #78206E;
     outline: none;
     box-shadow: 0 0 5px rgba(120, 32, 110, 0.5);
+}
+
+.form-buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+#clear-button {
+    background-color: #6c757d;
+}
+
+#clear-button:hover {
+    background-color: #5a6268;
 }
 
 button {
@@ -68,6 +85,7 @@ button {
     border-radius: 5px;
     cursor: pointer;
     transition: background-color 0.3s, transform 0.2s;
+    flex: 1;
 }
 
 button:hover {
@@ -121,26 +139,24 @@ button:active {
 }
 
 .confidence-meter {
-    background-color: #f0f0f0;
-    border-radius: 10px;
-    height: 20px;
+    height: 8px;
+    background-color: #e9ecef;
+    border-radius: 4px;
     margin: 1rem 0;
     overflow: hidden;
-    position: relative;
 }
 
 .confidence-bar {
-    background-color: #215E99;
     height: 100%;
+    background-color: #215E99;
     transition: width 0.5s ease-in-out;
-    width: 0;
 }
 
 .confidence-text {
-    color: #333;
-    font-size: 0.9rem;
-    margin-top: 0.5rem;
-    display: block;
+    text-align: right;
+    color: #215E99;
+    font-weight: bold;
+    font-size: 1rem;
 }
 
 .timeline-translations, .nearest-matches {
@@ -201,4 +217,135 @@ button:active {
 .prediction-entry .time-period {
     color: #215E99;
     font-weight: bold;
+}
+
+.sentence-prediction {
+    background-color: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin: 1.5rem 0;
+}
+
+.sentence-original {
+    font-size: 1.2rem;
+    margin-bottom: 0.5rem;
+}
+
+.sentence-ipa {
+    font-family: 'Courier New', monospace;
+    color: #78206E;
+    font-size: 1.4rem;
+    font-weight: bold;
+}
+
+.word-predictions {
+    margin-top: 2rem;
+}
+
+.word-prediction-item {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    margin: 0.5rem 0;
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.word-confidence-meter {
+    height: 4px;
+    background-color: #e9ecef;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.word-confidence-bar {
+    height: 100%;
+    background-color: #215E99;
+    transition: width 0.3s ease-in-out;
+}
+
+.word-details {
+    display: grid;
+    grid-template-columns: 1fr 2fr auto;
+    gap: 1rem;
+    align-items: center;
+}
+
+.word-original {
+    font-weight: bold;
+}
+
+.word-ipa {
+    font-family: 'Courier New', monospace;
+    color: #78206E;
+}
+
+.word-confidence {
+    color: #215E99;
+    font-weight: bold;
+}
+
+.timeline-entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #f8f9fa;
+    padding: 1rem;
+    margin: 0.5rem 0;
+    border-radius: 5px;
+}
+
+.match-details {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.time {
+    color: #215E99;
+    font-weight: bold;
+}
+
+.original-word {
+    font-style: italic;
+}
+
+.match-word {
+    font-weight: bold;
+}
+
+.match-ipa {
+    font-family: 'Courier New', monospace;
+    color: #78206E;
+}
+
+.match-similarity {
+    text-align: right;
+}
+
+.similarity-score {
+    background-color: #215E99;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.audio-controls {
+    margin-top: 1rem;
+}
+
+.play-audio {
+    background-color: #215E99;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.3s;
+}
+
+.play-audio:hover {
+    background-color: #78206E;
 }

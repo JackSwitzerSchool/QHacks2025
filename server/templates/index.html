@@ -14,7 +14,7 @@
     <main>
         <div class="card">
             <form id="language-form">
-                <label for="language-select">Select Future Language:</label>
+                <label for="language-select">Select Desired Language:</label>
                 <select id="language-select" name="language">
                     <option value="PIE">Proto-Indo-European</option>
                     <option value="old_english">Old English</option>
@@ -33,7 +33,10 @@
                     <button type="button" id="stop-mic">Stop Recording</button>
                 </div>
 
-                <button type="submit">Submit</button>
+                <div class="form-buttons">
+                    <button type="submit">Submit</button>
+                    <button type="button" id="clear-button">Clear</button>
+                </div>
             </form>
         </div>
 
@@ -44,17 +47,26 @@
                     <div class="confidence-bar"></div>
                     <span class="confidence-text"></span>
                 </div>
-                <div class="predicted-text"></div>
+                
+                <div class="sentence-prediction">
+                    <h3>Full Sentence:</h3>
+                    <div class="sentence-original"></div>
+                    <div class="sentence-ipa"></div>
+                    <div class="audio-controls">
+                        <button class="play-audio" style="display: none;">Play Pronunciation</button>
+                        <audio id="pronunciation-audio" style="display: none;"></audio>
+                    </div>
+                </div>
+
+                <div class="word-predictions">
+                    <h3>Word Breakdown:</h3>
+                    <div class="word-predictions-list"></div>
+                </div>
             </div>
 
             <div class="timeline-translations">
-                <h3>Historical Timeline:</h3>
+                <h3>Historical References:</h3>
                 <div class="timeline-entries"></div>
-            </div>
-
-            <div class="nearest-matches">
-                <h3>Similar Words:</h3>
-                <div class="matches-list"></div>
             </div>
         </section>
     </main>
@@ -89,6 +101,21 @@
             alert("Speech recognition is not supported in your browser.");
         }
 
+        $("#clear-button").on("click", function() {
+            $("#user-input").val("");
+            
+            $(".confidence-bar").css("width", "0%");
+            $(".confidence-text").text("");
+            $(".sentence-original").text("");
+            $(".sentence-ipa").text("");
+            $(".word-predictions-list").empty();
+            $(".timeline-entries").empty();
+            $(".play-audio").hide();
+            $("#pronunciation-audio").attr("src", "");
+            
+            $("#user-input").focus();
+        });
+
         $("#language-form").on("submit", function (e) {
             e.preventDefault();
             const formData = {
@@ -96,61 +123,82 @@
                 user_input: $("#user-input").val()
             };
 
+            const submitButton = $(this).find('button[type="submit"]');
+            submitButton.prop('disabled', true);
+
             $.ajax({
                 url: "/predict",
                 type: "POST",
                 contentType: "application/json",
                 data: JSON.stringify(formData),
                 success: function (response) {
-                    // Update confidence meter
                     const confidencePercent = (response.confidence_score * 100).toFixed(1);
                     $(".confidence-bar").css("width", `${confidencePercent}%`);
-                    $(".confidence-text").text(`Confidence: ${confidencePercent}%`);
+                    $(".confidence-text").text(`Overall Confidence: ${confidencePercent}%`);
                     
-                    // Update main prediction
-                    $(".predicted-text").html(`
-                        <div class="prediction-entry">
-                            <span class="original">Original: ${response.original_text}</span>
-                            <span class="ipa">IPA: ${response.predicted_text}</span>
-                            <span class="time-period">Time: ${response.time_period}</span>
-                        </div>
-                    `);
+                    $(".sentence-original").text(`Original: ${response.original_text}`);
+                    $(".sentence-ipa").text(`IPA: ${response.predicted_text}`);
+                    
+                    const wordList = $(".word-predictions-list");
+                    wordList.empty();
+                    
+                    response.word_predictions.forEach(word => {
+                        const wordConfidence = (word.confidence * 100).toFixed(1);
+                        wordList.append(`
+                            <div class="word-prediction-item">
+                                <div class="word-confidence-meter">
+                                    <div class="word-confidence-bar" style="width: ${wordConfidence}%"></div>
+                                </div>
+                                <div class="word-details">
+                                    <span class="word-original">${word.original}</span>
+                                    <span class="word-ipa">${word.ipa}</span>
+                                    <span class="word-confidence">${wordConfidence}%</span>
+                                </div>
+                            </div>
+                        `);
+                    });
 
-                    // Clear and update timeline entries
                     const timelineDiv = $(".timeline-entries");
                     timelineDiv.empty();
                     
-                    // Sort nearest matches by time period
-                    const sortedMatches = response.nearest_matches.sort((a, b) => a.time_period - b.time_period);
-                    
-                    // Create timeline entries
-                    sortedMatches.forEach(match => {
+                    response.nearest_matches.forEach(match => {
+                        const similarity = (100 * (1 - match.distance)).toFixed(1);
                         timelineDiv.append(`
                             <div class="timeline-entry">
-                                <span class="time">${match.time_period}</span>
-                                <span class="word">${match.word}</span>
-                                <span class="ipa">${match.ipa}</span>
-                                <span class="similarity">${(100 * (1 - match.distance)).toFixed(1)}% match</span>
+                                <div class="match-details">
+                                    <span class="time">Year: ${match.time_period}</span>
+                                    <span class="original-word">Original: ${match.original_word}</span>
+                                    <span class="match-word">Match: ${match.word}</span>
+                                    <span class="match-ipa">IPA: ${match.ipa}</span>
+                                </div>
+                                <div class="match-similarity">
+                                    <span class="similarity-score">${similarity}% match</span>
+                                </div>
                             </div>
                         `);
                     });
 
-                    // Update similar words section
-                    const matchesDiv = $(".matches-list");
-                    matchesDiv.empty();
-                    response.nearest_matches.forEach(match => {
-                        matchesDiv.append(`
-                            <div class="match-entry">
-                                <span class="word">${match.word}</span>
-                                <span class="ipa">${match.ipa}</span>
-                                <span class="similarity">${(100 * (1 - match.distance)).toFixed(1)}% match</span>
-                            </div>
-                        `);
-                    });
+                    if (response.audio) {
+                        const audioSrc = `data:audio/mp3;base64,${response.audio}`;
+                        const audio = $("#pronunciation-audio");
+                        audio.attr("src", audioSrc);
+                        
+                        $(".play-audio")
+                            .show()
+                            .off("click")
+                            .on("click", function() {
+                                audio[0].play();
+                            });
+                    } else {
+                        $(".play-audio").hide();
+                    }
                 },
                 error: function (error) {
                     console.error("Error:", error);
                     $(".predicted-text").text("Error processing your request.");
+                },
+                complete: function() {
+                    submitButton.prop('disabled', false);
                 }
             });
         });
