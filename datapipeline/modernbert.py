@@ -406,8 +406,12 @@ class ModernBERTProcessor:
         self.index = faiss.IndexFlatL2(dimension)
         self.index.add(vectors.astype('float32'))
     
-    def find_nearest_vectors(self, query: str, df: pd.DataFrame, top_n: int = 5):
-        """Find nearest vectors using FAISS"""
+    def find_nearest_vectors(self, query: str, df: pd.DataFrame, top_n: int = 10):
+        """
+        Find nearest vectors using FAISS, ensuring representation from different time periods.
+        Time periods: t=-1100, t=-5000, t=-300, t=0
+        Returns top matches with at least one from each time period if possible.
+        """
         query_embedding = self.generate_embedding(query)
         
         # Build index if not exists
@@ -422,13 +426,42 @@ class ModernBERTProcessor:
         query_embedding = query_embedding.reshape(1, -1).astype('float32')
         faiss.normalize_L2(query_embedding)
         
-        # Search using FAISS
-        distances, indices = self.index.search(query_embedding, top_n)
+        # Get more candidates than needed to ensure we find matches from each period
+        initial_k = min(100, len(df))  # Get top 100 or all if less
+        distances, indices = self.index.search(query_embedding, initial_k)
         
-        # Convert L2 distances to similarities (smaller distance = more similar)
-        similarities = 1 - distances/2  # Convert L2 distance to cosine similarity
+        # Convert L2 distances to similarities
+        similarities = 1 - distances[0]/2
         
-        return df.iloc[indices[0]], similarities[0]
+        # Create DataFrame with results
+        results_df = df.iloc[indices[0]].copy()
+        results_df['similarity'] = similarities
+        
+        # Target time periods
+        target_periods = [-5000, -1100, -300, 0]
+        
+        # Initialize final results
+        final_indices = []
+        
+        # First, get the closest match for each target period
+        for period in target_periods:
+            period_matches = results_df[results_df['time_period'] == period]
+            if not period_matches.empty:
+                best_match_idx = period_matches.index[0]
+                final_indices.append(best_match_idx)
+                results_df = results_df[~results_df.index.isin([best_match_idx])]
+        
+        # Fill remaining slots with best remaining matches
+        remaining_slots = top_n - len(final_indices)
+        if remaining_slots > 0:
+            remaining_best = results_df.nlargest(remaining_slots, 'similarity')
+            final_indices.extend(remaining_best.index)
+        
+        # Get final results
+        final_results = df.loc[final_indices]
+        final_similarities = [similarities[list(indices[0]).index(idx)] for idx in final_indices]
+        
+        return final_results, np.array(final_similarities)
 
 # Example usage
 if __name__ == "__main__":

@@ -4,3 +4,4 @@
 /.vscode/
 /datapipeline/data/
 datapipeline/__pycache__/
+!/datapipeline/data/output/projected_vectors_with_metadata.csv
