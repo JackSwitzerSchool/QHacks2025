@@ -10,26 +10,26 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class EmbeddingVisualizer:
-    def __init__(self, embeddings_path: str = "datapipeline/data/output/embeddings_combined.npz"):
-        """Initialize the visualizer with path to embeddings"""
-        self.embeddings_path = Path(embeddings_path)
+    def __init__(self, csv_path: str = "C:/Users/jacks/Documents/Life/Projects/Current/Chorono/datapipeline/data/output/projected_vectors_with_metadata.csv"):
+        """Initialize the visualizer with path to CSV file containing embeddings"""
+        self.csv_path = Path(csv_path)
         self.load_data()
         
     def load_data(self):
-        """Load embeddings and metadata from the combined file"""
-        logger.info(f"Loading embeddings from {self.embeddings_path}")
-        data = np.load(self.embeddings_path, allow_pickle=True)
+        """Load embeddings and metadata from the CSV file"""
+        logger.info(f"Loading data from {self.csv_path}")
+        self.df = pd.read_csv(self.csv_path)
         
-        self.embeddings = data['embeddings']
-        self.metadata = data['metadata']
+        # Parse vector strings to numpy arrays
+        logger.info("Parsing vectors from string format...")
+        self.embeddings = np.stack([
+            np.fromstring(vec_str.strip()[1:-1], sep=",") 
+            for vec_str in self.df["vector"].values
+        ])
         
-        # Convert metadata list to DataFrame for easier handling
-        self.df = pd.DataFrame(self.metadata)
-        
-        # Debug: print column names
         logger.info(f"DataFrame columns: {self.df.columns.tolist()}")
         logger.info(f"Sample of first row: {self.df.iloc[0].to_dict()}")
-        logger.info(f"Loaded {len(self.embeddings)} embeddings")
+        logger.info(f"Loaded {len(self.embeddings)} embeddings with shape {self.embeddings.shape}")
         
     def reduce_dimensions(self, n_neighbors=15, min_dist=0.1, n_components=3):
         """Reduce dimensionality of embeddings using UMAP"""
@@ -61,10 +61,10 @@ class EmbeddingVisualizer:
             color=df_sample[color_by],
             hover_data={
                 'word': df_sample['word'],
-                'translation': df_sample['translation'],
+                'english_translation': df_sample['english_translation'],
                 'language': df_sample['language'],
                 'time_period': df_sample['time_period'],
-                'phonetic': df_sample['phonetic']
+                'phonetic_representation': df_sample['phonetic_representation']
             },
             title=f'Word Embeddings Visualization (colored by {color_by})'
         )
@@ -104,7 +104,7 @@ class EmbeddingVisualizer:
             color=df_sample['language'],
             hover_data={
                 'word': df_sample['word'],
-                'translation': df_sample['translation']
+                'english_translation': df_sample['english_translation']
             },
             title='Word Evolution Over Time'
         )
@@ -142,7 +142,7 @@ class EmbeddingVisualizer:
         for idx in most_similar_idx:
             results.append({
                 'word': self.df.iloc[idx]['word'],
-                'translation': self.df.iloc[idx]['translation'],
+                'english_translation': self.df.iloc[idx]['english_translation'],
                 'language': self.df.iloc[idx]['language'],
                 'time_period': self.df.iloc[idx]['time_period'],
                 'similarity': similarities[idx]
